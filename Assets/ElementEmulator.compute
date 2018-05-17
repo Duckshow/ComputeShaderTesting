@@ -1,0 +1,30 @@
+﻿#pragma kernel CSMain
+
+RWStructuredBuffer<half2> uvBuffer;
+Texture2D<float4> terrainMap;
+RWTexture2D<float4> output;
+
+
+[numthreads(32, 32, 1)]
+void CSMain (uint3 pixel : SV_DispatchThreadID){
+ 	int PIXELS_PER_EDGE = 32;
+	uint2 outputDimensions;
+	output.GetDimensions(outputDimensions.x, outputDimensions.y);
+	uint2 terrainMapDimensions;
+	terrainMap.GetDimensions(terrainMapDimensions.x, terrainMapDimensions.y);
+
+	uint2 pixelRelativeToTile = pixel.xy % PIXELS_PER_EDGE;
+	uint2 tilePos = (pixel.xy - pixelRelativeToTile) / PIXELS_PER_EDGE;
+	uint2 tilesPerEdge = outputDimensions / PIXELS_PER_EDGE;
+	uint uvBufferIndex = tilesPerEdge.x * tilePos.y + tilePos.x;
+
+	uint2 terrainMapBottomLeftPixel = uvBuffer[uvBufferIndex] * terrainMapDimensions;
+	uint2 terrainMapPixel = terrainMapBottomLeftPixel + pixelRelativeToTile;
+
+	// float2 fOutputDimensions = (float2)outputDimensions;
+	// float2 fPixel = (float2)pixel; 
+	//output[pixel.xy] = float4((float)pixelRelativeToTile.x / (float)PIXELS_PER_EDGE, (float)pixelRelativeToTile.y / (float)PIXELS_PER_EDGE, 0, 2);
+//	output[pixel.xy] = float4(uvBufferIndex, 0, 0, 1);
+	output[pixel.xy] = terrainMap[terrainMapPixel];
+	//output[pixel.xy] = float4(1.0 / (pixel.x % 32), 1.0 / (pixel.y % 32), 0, 1);
+}
