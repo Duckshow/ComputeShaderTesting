@@ -1,30 +1,108 @@
-﻿#pragma kernel CSMain
+﻿//#pragma kernel Start
+#pragma kernel Update
 
-RWStructuredBuffer<half2> uvBuffer;
+struct PixelContent{
+	half Element1;
+	half Temperature; // keep between 0-10.000(K) (celsius = -273-9727)
+
+	half GetPressure(){
+		return Element1 * Temperature; // add Elements, multiply with Temperature
+	}
+	void SpreadContentTo(PixelContent source, half pressureDiff){
+		Element1 += clamp(source.Element1 * pressureDiff, -Element1, source.Element1);
+	}
+};
+
+const int PIXELS_PER_TILE_EDGE = 32;
+
+RWStructuredBuffer<PixelContent> pixelsContent;
+StructuredBuffer<half2> uvs;
 Texture2D<float4> terrainMap;
 RWTexture2D<float4> output;
 
 
+// [numthreads(32, 32, 1)]
+// void Start(uint3 pixel : SV_DispatchThreadID){
+// 	// uint2 outputDimensions;
+// 	// output.GetDimensions(outputDimensions.x, outputDimensions.y);
+
+// 	// int pixelIndex = pixel.y * outputDimensions.x + pixel.x;
+
+// 	// pixelsContent[0].Element1 = 0.5;
+// 	// output[pixel.xy] = pixelsContent[pixelIndex].Element1;
+// }
+
+void SortPressureArrayIndices(out PixelContent neighbors[4], uint p1, uint p2){
+	half pMinIndex, pMaxIndex, pDeltaSign;
+
+	p1 = 0;
+	p2 = 1;
+	p1 = abs(neighbors[p1].GetPressure());
+	p2 = abs(neighbors[p2].GetPressure());
+	pDeltaSign = sign(p2 - p1);
+	pMaxIndex = lerp(p1, p2, pDeltaSign);
+	pMinIndex = lerp(p2, p1, pDeltaSign);
+	neighbors[p1] = neighbors[pMaxIndex];
+	neighbors[p2] = neighbors[pMinIndex];
+}
+void SortPressureArray(out PixelContent neighbors[4]){
+	half i1, i2, p1, p2, pMinIndex, pMaxIndex, pDeltaSign;
+
+	// not using for-loop bc this is probably more optimized
+	SortPressureArrayIndices(neighbors, 0, 1);
+	
+	SortPressureArrayIndices(neighbors, 1, 2);
+	SortPressureArrayIndices(neighbors, 0, 1);
+
+	SortPressureArrayIndices(neighbors, 2, 3);
+	SortPressureArrayIndices(neighbors, 1, 2);
+	SortPressureArrayIndices(neighbors, 0, 1);
+}
+
+
 [numthreads(32, 32, 1)]
-void CSMain (uint3 pixel : SV_DispatchThreadID){
- 	int PIXELS_PER_EDGE = 32;
+void Update (uint3 id : SV_DispatchThreadID){
 	uint2 outputDimensions;
 	output.GetDimensions(outputDimensions.x, outputDimensions.y);
 	uint2 terrainMapDimensions;
 	terrainMap.GetDimensions(terrainMapDimensions.x, terrainMapDimensions.y);
 
-	uint2 pixelRelativeToTile = pixel.xy % PIXELS_PER_EDGE;
-	uint2 tilePos = (pixel.xy - pixelRelativeToTile) / PIXELS_PER_EDGE;
-	uint2 tilesPerEdge = outputDimensions / PIXELS_PER_EDGE;
-	uint uvBufferIndex = tilesPerEdge.x * tilePos.y + tilePos.x;
-
-	uint2 terrainMapBottomLeftPixel = uvBuffer[uvBufferIndex] * terrainMapDimensions;
+	uint2 pixelRelativeToTile = id.xy % PIXELS_PER_TILE_EDGE;
+	uint2 tilePos = (id.xy - pixelRelativeToTile) / PIXELS_PER_TILE_EDGE;
+	uint2 tilesPerEdge = outputDimensions / PIXELS_PER_TILE_EDGE;
+	
+	uint uvsIndex = tilesPerEdge.x * tilePos.y + tilePos.x;
+	half2 uv = uvs[uvsIndex];
+	
+	uint2 terrainMapBottomLeftPixel = uvs[uvsIndex] * terrainMapDimensions;
 	uint2 terrainMapPixel = terrainMapBottomLeftPixel + pixelRelativeToTile;
 
-	// float2 fOutputDimensions = (float2)outputDimensions;
-	// float2 fPixel = (float2)pixel; 
-	//output[pixel.xy] = float4((float)pixelRelativeToTile.x / (float)PIXELS_PER_EDGE, (float)pixelRelativeToTile.y / (float)PIXELS_PER_EDGE, 0, 2);
-//	output[pixel.xy] = float4(uvBufferIndex, 0, 0, 1);
-	output[pixel.xy] = terrainMap[terrainMapPixel];
-	//output[pixel.xy] = float4(1.0 / (pixel.x % 32), 1.0 / (pixel.y % 32), 0, 1);
+	uint pixelsContentIndex = outputDimensions.x * id.y + id.x;
+	uint pixelsContentAbove = pixelsContentIndex + outputDimensions.x;
+	uint pixelsContentBelow = pixelsContentIndex - outputDimensions.x;
+	uint pixelsContentRight = pixelsContentIndex + 1;
+	uint pixelsContentLeft = pixelsContentIndex - 1;
+
+	PixelContent content = pixelsContent[pixelsContentIndex];
+	PixelContent contentAbove = pixelsContent[pixelsContentAbove];
+	PixelContent contentBelow = pixelsContent[pixelsContentBelow];
+	PixelContent contentRight = pixelsContent[pixelsContentRight];
+	PixelContent contentLeft = pixelsContent[pixelsContentLeft];
+
+	half pressure = content.GetPressure();
+	PixelContent neighbors[4] = { contentAbove, contentBelow, contentRight, contentLeft };
+	SortPressureArray(neighbors);
+
+	PixelContent neighbor0 = neighbors[0];
+	PixelContent neighbor1 = neighbors[1];
+	PixelContent neighbor2 = neighbors[2];
+	PixelContent neighbor3 = neighbors[3];
+
+	content.SpreadContentTo(neighbor0, neighbor0.GetPressure() - pressure);
+	content.SpreadContentTo(neighbor1, neighbor1.GetPressure() - pressure);
+	content.SpreadContentTo(neighbor2, neighbor2.GetPressure() - pressure);
+	content.SpreadContentTo(neighbor3, neighbor3.GetPressure() - pressure);
+
+	output[id.xy] = float4(0, 0, pixelsContent[pixelsContentIndex].Element1, 1);
+	//output[pixel.xy] = terrainMap[terrainMapPixel];
 }
