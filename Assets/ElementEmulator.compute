@@ -1,5 +1,4 @@
-﻿//#pragma kernel Start
-#pragma kernel Update
+﻿#pragma kernel Update
 
 struct PixelContent{
 	half Element1;
@@ -9,28 +8,24 @@ struct PixelContent{
 		return Element1 * Temperature; // add Elements, multiply with Temperature
 	}
 	void SpreadContentTo(PixelContent source, half pressureDiff){
+		//Element1 += source.Element1 * sign(pressureDiff) * 0.5;
 		Element1 += clamp(source.Element1 * pressureDiff, -Element1, source.Element1);
 	}
 };
 
-const int PIXELS_PER_TILE_EDGE = 32;
+// ============== WARNING: shared with ElementEmulator.cs! must be equal!
+static const int PIXELS_PER_TILE_EDGE = 32;
+static const int GRID_WIDTH_TILES = 3;
+static const int GRID_HEIGHT_TILES = 1;
+static const int GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
+static const int GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
+//===============
 
 RWStructuredBuffer<PixelContent> pixelsContent;
 StructuredBuffer<half2> uvs;
 Texture2D<float4> terrainMap;
 RWTexture2D<float4> output;
 
-
-// [numthreads(32, 32, 1)]
-// void Start(uint3 pixel : SV_DispatchThreadID){
-// 	// uint2 outputDimensions;
-// 	// output.GetDimensions(outputDimensions.x, outputDimensions.y);
-
-// 	// int pixelIndex = pixel.y * outputDimensions.x + pixel.x;
-
-// 	// pixelsContent[0].Element1 = 0.5;
-// 	// output[pixel.xy] = pixelsContent[pixelIndex].Element1;
-// }
 
 void SortPressureArrayIndices(out PixelContent neighbors[4], uint p1, uint p2){
 	half pMinIndex, pMaxIndex, pDeltaSign;
@@ -64,45 +59,54 @@ void SortPressureArray(out PixelContent neighbors[4]){
 void Update (uint3 id : SV_DispatchThreadID){
 	uint2 outputDimensions;
 	output.GetDimensions(outputDimensions.x, outputDimensions.y);
-	uint2 terrainMapDimensions;
-	terrainMap.GetDimensions(terrainMapDimensions.x, terrainMapDimensions.y);
+	// uint2 terrainMapDimensions;
+	// terrainMap.GetDimensions(terrainMapDimensions.x, terrainMapDimensions.y);
 
-	uint2 pixelRelativeToTile = id.xy % PIXELS_PER_TILE_EDGE;
-	uint2 tilePos = (id.xy - pixelRelativeToTile) / PIXELS_PER_TILE_EDGE;
-	uint2 tilesPerEdge = outputDimensions / PIXELS_PER_TILE_EDGE;
+	// uint2 pixelRelativeToTile = id.xy % PIXELS_PER_TILE_EDGE;
+	// uint2 tilePos = (id.xy - pixelRelativeToTile) / PIXELS_PER_TILE_EDGE;
+	// uint2 tilesPerEdge = outputDimensions / PIXELS_PER_TILE_EDGE;
 	
-	uint uvsIndex = tilesPerEdge.x * tilePos.y + tilePos.x;
-	half2 uv = uvs[uvsIndex];
+	// uint uvsIndex = tilesPerEdge.x * tilePos.y + tilePos.x;
+	// half2 uv = uvs[uvsIndex];
 	
-	uint2 terrainMapBottomLeftPixel = uvs[uvsIndex] * terrainMapDimensions;
-	uint2 terrainMapPixel = terrainMapBottomLeftPixel + pixelRelativeToTile;
+	// uint2 terrainMapBottomLeftPixel = uvs[uvsIndex] * terrainMapDimensions;
+	// uint2 terrainMapPixel = terrainMapBottomLeftPixel + pixelRelativeToTile;
 
-	uint pixelsContentIndex = outputDimensions.x * id.y + id.x;
-	uint pixelsContentAbove = pixelsContentIndex + outputDimensions.x;
-	uint pixelsContentBelow = pixelsContentIndex - outputDimensions.x;
-	uint pixelsContentRight = pixelsContentIndex + 1;
-	uint pixelsContentLeft = pixelsContentIndex - 1;
+	uint pixelsContentIndex = GRID_WIDTH_PIXELS * id.y + id.x;
+	// uint pixelsContentAbove = pixelsContentIndex + outputDimensions.x;
+	// uint pixelsContentBelow = pixelsContentIndex - outputDimensions.x;
+	// uint pixelsContentRight = pixelsContentIndex + 1;
+	// uint pixelsContentLeft = pixelsContentIndex - 1;
 
-	PixelContent content = pixelsContent[pixelsContentIndex];
-	PixelContent contentAbove = pixelsContent[pixelsContentAbove];
-	PixelContent contentBelow = pixelsContent[pixelsContentBelow];
-	PixelContent contentRight = pixelsContent[pixelsContentRight];
-	PixelContent contentLeft = pixelsContent[pixelsContentLeft];
+	// PixelContent content = pixelsContent[pixelsContentIndex];
+	// PixelContent contentAbove = pixelsContent[pixelsContentAbove];
+	// PixelContent contentBelow = pixelsContent[pixelsContentBelow];
+	// PixelContent contentRight = pixelsContent[pixelsContentRight];
+	// PixelContent contentLeft = pixelsContent[pixelsContentLeft];
 
-	half pressure = content.GetPressure();
-	PixelContent neighbors[4] = { contentAbove, contentBelow, contentRight, contentLeft };
-	SortPressureArray(neighbors);
+	// half pressure = content.GetPressure();
+	// PixelContent neighbors[4] = { contentAbove, contentBelow, contentRight, contentLeft };
+	// SortPressureArray(neighbors);
 
-	PixelContent neighbor0 = neighbors[0];
-	PixelContent neighbor1 = neighbors[1];
-	PixelContent neighbor2 = neighbors[2];
-	PixelContent neighbor3 = neighbors[3];
+	// PixelContent neighbor0 = neighbors[0];
+	// PixelContent neighbor1 = neighbors[1];
+	// PixelContent neighbor2 = neighbors[2];
+	// PixelContent neighbor3 = neighbors[3];
 
-	content.SpreadContentTo(neighbor0, neighbor0.GetPressure() - pressure);
-	content.SpreadContentTo(neighbor1, neighbor1.GetPressure() - pressure);
-	content.SpreadContentTo(neighbor2, neighbor2.GetPressure() - pressure);
-	content.SpreadContentTo(neighbor3, neighbor3.GetPressure() - pressure);
+	// content.SpreadContentTo(neighbor0, neighbor0.GetPressure() - pressure);
+	// content.SpreadContentTo(neighbor1, neighbor1.GetPressure() - pressure);
+	// content.SpreadContentTo(neighbor2, neighbor2.GetPressure() - pressure);
+	// content.SpreadContentTo(neighbor3, neighbor3.GetPressure() - pressure);
 
-	output[id.xy] = float4(0, 0, pixelsContent[pixelsContentIndex].Element1, 1);
+	//output[id.xy] = float4(pixelsContentIndex / (half)(GRID_HEIGHT_PIXELS * GRID_WIDTH_PIXELS), 0, 0, 1);
+
+	output[id.xy] = float4(0, 0, floor(31 / (half)(outputDimensions.y)), 1);
+
+	// if(id.x % 2 == 0){
+	// 	output[id.xy] = float4(0, 0, pixelsContent[pixelsContentIndex].Element1, 1);
+	// }
+	// else{
+	// 	output[id.xy] = float4(pixelsContent[pixelsContentIndex].Element1, 0, 0, 1);
+	// }
 	//output[pixel.xy] = terrainMap[terrainMapPixel];
 }

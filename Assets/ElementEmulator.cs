@@ -18,18 +18,18 @@ public class ElementEmulator : MonoBehaviour {
 	private Texture2D terrainMap;
 	[SerializeField]
 	private Material material;
-	private float updateInterval = 1.0f;
+	private float updateInterval = 0.1f;
 
 	private const int THREAD_COUNT_MAX = 1024;
+
+	// ============== WARNING: shared with ElementEmulator.compute! must be equal!
 	private const int PIXELS_PER_TILE_EDGE = 32;
 	private const int GRID_WIDTH_TILES = 3;
 	private const int GRID_HEIGHT_TILES = 1;
 	private const int GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
 	private const int GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
+	//===============
 
-	// private const string KERNEL_START = "Start";
-	// private int kernelID_Start;
-	
 	private const string KERNEL_UPDATE = "Update";
 	private int kernelID_Update;
 	
@@ -60,7 +60,6 @@ public class ElementEmulator : MonoBehaviour {
 
 
 	void Awake(){
-//		kernelID_Start = shader.FindKernel(KERNEL_START);
 		kernelID_Update = shader.FindKernel(KERNEL_UPDATE);
 		threadCountAxis = (int)Mathf.Sqrt(THREAD_COUNT_MAX);
 		threadGroupCountX = GRID_WIDTH_PIXELS / threadCountAxis;
@@ -71,9 +70,14 @@ public class ElementEmulator : MonoBehaviour {
 		shaderPropertyID_terrainMap = Shader.PropertyToID(PROPERTY_TERRAINMAP);
 		shaderPropertyID_output = Shader.PropertyToID(PROPERTY_OUTPUT);
 	}
+
+
+	void OnDisable(){
+		bufferUVs.Dispose();
+		bufferPixels.Dispose();
+	}
 	
 	void Start () {
-		//shader.Dispatch(kernelID_Start, threadGroupCountX, threadGroupCountY, 1);
 		InitShader();
 	}
 
@@ -85,23 +89,36 @@ public class ElementEmulator : MonoBehaviour {
 	}
 
 	void InitShader(){
-		// transform.localScale = new Vector3(GRID_WIDTH_TILES, GRID_HEIGHT_TILES, 1);
+		transform.localScale = new Vector3(GRID_WIDTH_TILES, GRID_HEIGHT_TILES, 1);
 
 		// output = new RenderTexture(GRID_WIDTH_PIXELS, GRID_HEIGHT_PIXELS, 24);
 		// output.enableRandomWrite = true;
 		// output.filterMode = FilterMode.Point;
 		// output.Create();
+		output = new RenderTexture(GRID_WIDTH_PIXELS, GRID_HEIGHT_PIXELS, 24);
+		output.enableRandomWrite = true;
+		output.filterMode = FilterMode.Point;
+		output.Create();
 
-		// uvs = GetGridUVs();
-		// bufferUVs = new ComputeBuffer(uvs.Length, sizeof(float) * 2);
+		uvs = GetGridUVs();
+		bufferUVs = new ComputeBuffer(uvs.Length, sizeof(float) * 2);
 		// bufferUVs.SetData(uvs);
 		// shader.SetBuffer(kernelID_Update, shaderPropertyID_uvs, bufferUVs);
 
-		// pixelsContent = new PixelContent[GRID_WIDTH_PIXELS * GRID_HEIGHT_PIXELS];
-		// for (int i = 0; i < pixelsContent.Length; i++){
-		// 	pixelsContent[i].Element1 = 0.5f;
-		// }
-		// bufferPixels = new ComputeBuffer(pixelsContent.Length, PixelContent.GetStride());
+		pixelsContent = new PixelContent[GRID_WIDTH_PIXELS * GRID_HEIGHT_PIXELS];
+		for (int i = 0; i < pixelsContent.Length; i++){
+			if(i < GRID_WIDTH_PIXELS){
+				pixelsContent[i].Element1 = 1;
+			}
+			else{
+				pixelsContent[i].Element1 = 0.5f;
+			}
+
+		}
+
+		damdpMdp // continue here. So... pixelsContent Element1 to 1 96 times (correct) and the CS's pixelsContent is 96x32 (correct), but upon examination it's as if Element1 was set to 1 48 times! Keep investigating.
+
+		bufferPixels = new ComputeBuffer(pixelsContent.Length, PixelContent.GetStride());
 		// bufferPixels.SetData(pixelsContent);
 		// shader.SetBuffer(kernelID_Update, shaderPropertyID_pixelsContent, bufferPixels);
 
@@ -116,21 +133,17 @@ public class ElementEmulator : MonoBehaviour {
 	public void UpdateShader() {
 		transform.localScale = new Vector3(GRID_WIDTH_TILES, GRID_HEIGHT_TILES, 1);
 
-		output = new RenderTexture(GRID_WIDTH_PIXELS, GRID_HEIGHT_PIXELS, 24);
-		output.enableRandomWrite = true;
-		output.filterMode = FilterMode.Point;
-		output.Create();
 
-		uvs = GetGridUVs();
-		bufferUVs = new ComputeBuffer(uvs.Length, sizeof(float) * 2);
+		//uvs = GetGridUVs();
+		//bufferUVs = new ComputeBuffer(uvs.Length, sizeof(float) * 2);
 		bufferUVs.SetData(uvs);
 		shader.SetBuffer(kernelID_Update, shaderPropertyID_uvs, bufferUVs);
 
-		pixelsContent = new PixelContent[GRID_WIDTH_PIXELS * GRID_HEIGHT_PIXELS * 2];
-		for (int i = 0; i < pixelsContent.Length; i++){
-			pixelsContent[i].Element1 = Random.value;
-		}
-		bufferPixels = new ComputeBuffer(pixelsContent.Length, PixelContent.GetStride());
+		// pixelsContent = new PixelContent[GRID_WIDTH_PIXELS * GRID_HEIGHT_PIXELS * 2];
+		// for (int i = 0; i < pixelsContent.Length; i++){
+		// 	pixelsContent[i].Element1 = Random.value;
+		// }
+		//bufferPixels = new ComputeBuffer(pixelsContent.Length, PixelContent.GetStride());
 		bufferPixels.SetData(pixelsContent);
 		shader.SetBuffer(kernelID_Update, shaderPropertyID_pixelsContent, bufferPixels);
 
@@ -140,8 +153,8 @@ public class ElementEmulator : MonoBehaviour {
 		shader.Dispatch(kernelID_Update, threadGroupCountX, threadGroupCountY, 1);
 		material.mainTexture = output;
 		
-		bufferUVs.Dispose();
-		bufferPixels.Dispose();
+		// bufferUVs.Dispose();
+		// bufferPixels.Dispose();
 	}
 
 	Vector2[] GetGridUVs(){
