@@ -6,9 +6,10 @@ public class ElementEmulator : MonoBehaviour {
 
 	struct PixelContent{ // must correspond to ElementEmulator.compute's PixelContent!
 		public float Element1;
+		public float Temperature;
 
 		public static int GetStride() {
-			return sizeof(float); // must correspond to variables!
+			return sizeof(float) * 2; // must correspond to variables!
 		}
 	}
 
@@ -107,16 +108,11 @@ public class ElementEmulator : MonoBehaviour {
 
 		pixelsContent = new PixelContent[GRID_WIDTH_PIXELS * GRID_HEIGHT_PIXELS];
 		for (int i = 0; i < pixelsContent.Length; i++){
-			if(i < GRID_WIDTH_PIXELS){
-				pixelsContent[i].Element1 = 1;
-			}
-			else{
-				pixelsContent[i].Element1 = 0.5f;
-			}
-
+			PixelContent pixel = pixelsContent[i];
+			pixel.Element1 = Random.value;
+			pixel.Temperature = 1.0f;
+			pixelsContent[i] = pixel;
 		}
-
-		damdpMdp // continue here. So... pixelsContent Element1 to 1 96 times (correct) and the CS's pixelsContent is 96x32 (correct), but upon examination it's as if Element1 was set to 1 48 times! Keep investigating.
 
 		bufferPixels = new ComputeBuffer(pixelsContent.Length, PixelContent.GetStride());
 		// bufferPixels.SetData(pixelsContent);
