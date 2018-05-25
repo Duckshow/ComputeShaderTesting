@@ -4,7 +4,7 @@ using UnityEngine;
 
 public class ElementEmulator : MonoBehaviour {
 
-	struct PixelContent{ // must correspond to ElementEmulator.compute's PixelContent!
+	struct PixelContent{ // WARNING: variables must correspond to ElementEmulator.compute's PixelContent!
 		public float Element1;
 		public float Temperature;
 
@@ -110,9 +110,10 @@ public class ElementEmulator : MonoBehaviour {
 		for (int i = 0; i < pixelsContent.Length; i++){
 			PixelContent pixel = pixelsContent[i];
 			pixel.Element1 = Random.value;
-			pixel.Temperature = 1.0f;
+			pixel.Temperature = 1000.0f;
 			pixelsContent[i] = pixel;
 		}
+		pixelsContent[Random.Range(0, pixelsContent.Length)].Element1 = 1.0f;
 
 		bufferPixels = new ComputeBuffer(pixelsContent.Length, PixelContent.GetStride());
 		// bufferPixels.SetData(pixelsContent);
@@ -148,7 +149,9 @@ public class ElementEmulator : MonoBehaviour {
 
 		shader.Dispatch(kernelID_Update, threadGroupCountX, threadGroupCountY, 1);
 		material.mainTexture = output;
-		
+
+		bufferPixels.GetData(pixelsContent);
+
 		// bufferUVs.Dispose();
 		// bufferPixels.Dispose();
 	}

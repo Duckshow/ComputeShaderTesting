@@ -1,24 +1,30 @@
 ﻿#pragma kernel Update
 
-struct PixelContent{
+struct PixelContent{ // WARNING: variables must correspond to ElementEmulator.cs's PixelContent!
+	static const half TEMPERATURE_MAX = 10000.0;
+	static const half TEMPERATURE_MIN = 0.00001;
+
 	half Element1;
 	half Temperature; // keep between 0-10.000(K) (celsius = -273-9727)
 
 	half GetPressure(){
-		return Element1 * Temperature; // add Elements, multiply with Temperature
+		return Element1 * (Temperature / TEMPERATURE_MAX); // add Elements, multiply with Temperature
 	}
-	void SpreadContentTo(PixelContent source, half pressureDiff){
-		Element1 += source.Element1 * sign(pressureDiff) * 0.5;
-		//Element1 += clamp(source.Element1 * pressureDiff, -Element1, source.Element1);
+	void SpreadContentFrom(PixelContent source, half canReachSource){
+		half pressureDiff = source.GetPressure() - GetPressure();
+		int giveOrReceive = clamp(sign(pressureDiff), 0, 1);
+
+		Element1 += lerp(Element1, source.Element1, giveOrReceive) * pressureDiff * canReachSource;
 	}
 };
 
 // ============== WARNING: shared with ElementEmulator.cs! must be equal!
-static const int PIXELS_PER_TILE_EDGE = 32;
-static const int GRID_WIDTH_TILES = 3;
-static const int GRID_HEIGHT_TILES = 1;
-static const int GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
-static const int GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
+static const uint PIXELS_PER_TILE_EDGE = 32;
+static const uint GRID_WIDTH_TILES = 3;
+static const uint GRID_HEIGHT_TILES = 1;
+static const uint GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
+static const uint GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
+static const uint2 TERRAINMAP_SIZE_PIXELS = uint2(96, 32);
 //===============
 
 RWStructuredBuffer<PixelContent> pixelsContent;
@@ -71,8 +77,9 @@ void Update (uint3 id : SV_DispatchThreadID){
 	uint uvsIndex = tilesPerEdge.x * tilePos.y + tilePos.x;
 	half2 uv = uvs[uvsIndex];
 	
-	// uint2 terrainMapBottomLeftPixel = uvs[uvsIndex] * terrainMapDimensions;
-	// uint2 terrainMapPixel = terrainMapBottomLeftPixel + pixelRelativeToTile;
+	uint2 terrainMapBottomLeftIndex = uvs[uvsIndex] * TERRAINMAP_SIZE_PIXELS;
+	uint2 terrainMapIndex = terrainMapBottomLeftIndex + pixelRelativeToTile;
+	float4 terrainMapPixel = terrainMap[terrainMapIndex];
 
 	uint pixelsContentIndex = (GRID_WIDTH_PIXELS * id.y + id.x);
 	uint pixelsContentAbove = pixelsContentIndex + GRID_WIDTH_PIXELS;
@@ -86,19 +93,17 @@ void Update (uint3 id : SV_DispatchThreadID){
 	PixelContent contentRight = pixelsContent[pixelsContentRight];
 	PixelContent contentLeft = pixelsContent[pixelsContentLeft];
 
-	PixelContent neighbors[4] = { contentAbove, contentBelow, contentRight, contentLeft };
-	SortPressureArray(neighbors);
+	half canReachAbove = clamp(GRID_HEIGHT_PIXELS - 1 - id.y, 0, 1);
+	half canReachBelow = clamp(id.y, 0, 1);
+	half canReachRight = clamp(GRID_WIDTH_PIXELS - 1 - id.x, 0, 1);
+	half canReachLeft = clamp(id.x, 0, 1);
 
-	PixelContent neighbor0 = neighbors[0];
-	PixelContent neighbor1 = neighbors[1];
-	PixelContent neighbor2 = neighbors[2];
-	PixelContent neighbor3 = neighbors[3];
-
-	content.SpreadContentTo(neighbor0, neighbor0.GetPressure() - content.GetPressure());
-	content.SpreadContentTo(neighbor1, neighbor1.GetPressure() - content.GetPressure());
-	content.SpreadContentTo(neighbor2, neighbor2.GetPressure() - content.GetPressure());
-	content.SpreadContentTo(neighbor3, neighbor3.GetPressure() - content.GetPressure());
+	content.SpreadContentFrom(contentAbove, canReachAbove);
+	content.SpreadContentFrom(contentBelow, canReachBelow);
+	content.SpreadContentFrom(contentRight, canReachRight);
+	content.SpreadContentFrom(contentLeft, canReachLeft);
 
 	pixelsContent[pixelsContentIndex] = content;
-	output[id.xy] = content.GetPressure();
+	float4 outputColor = terrainMapPixel;// float4(0, 0, content.Element1, 1);
+	output[id.xy] = outputColor;
 }
