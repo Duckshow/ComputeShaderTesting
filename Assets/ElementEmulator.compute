@@ -1,4 +1,5 @@
-﻿#pragma kernel Update
+﻿#pragma kernel Init
+#pragma kernel Update
 
 struct PixelContent{ // WARNING: variables must correspond to ElementEmulator.cs's PixelContent!
 	static const half TEMPERATURE_MAX = 10000.0;
@@ -7,13 +8,39 @@ struct PixelContent{ // WARNING: variables must correspond to ElementEmulator.cs
 	half Element1;
 	half Temperature; // keep between 0-10.000(K) (celsius = -273-9727)
 
-	half GetPressure(){
-		return Element1 * (Temperature / TEMPERATURE_MAX); // add Elements, multiply with Temperature
-	}
-	void SpreadContentFrom(PixelContent source, half canReachSource){
-		half pressureDiff = source.GetPressure() - GetPressure();
-		int giveOrReceive = clamp(sign(pressureDiff), 0, 1);
+	half BaseDistribution;
+	half4 TerrainMapPixel;
+	half2 Wind;
 
+
+	half IsFreeFromObstacles(){
+		return 1 - round(TerrainMapPixel.a);
+	}
+
+	void ClearContentIfBlockedByObstacle(){ // Note: Temperature should still be able to spread though
+		half isFree = IsFreeFromObstacles();
+		Element1 *= isFree;
+	}
+
+	half2 GetDistributionMod(){
+		return BaseDistribution * (1.0 + Wind);
+	}
+	
+	half GetPressure(half2 directionToThis){
+		half2 distribution = GetDistributionMod();
+		half distributionX = lerp((BaseDistribution * 2) - distribution.x, distribution.x, clamp(-directionToThis.x, 0, 1)) * abs(directionToThis.x);
+		half distributionY = lerp((BaseDistribution * 2) - distribution.y, distribution.y, clamp(-directionToThis.y, 0, 1)) * abs(directionToThis.y);
+
+		return Element1 * (distributionX + distributionY);// * (Temperature / TEMPERATURE_MAX); // add Elements, multiply with Temperature
+	}
+	
+	void SpreadContentFrom(PixelContent source, half canReachSource, half test, half2 directionToSource){
+		half pressureDiff = source.GetPressure(directionToSource) - GetPressure(-directionToSource);
+		pressureDiff = clamp(pressureDiff, -1, 1);
+
+		Wind += directionToSource * pressureDiff;
+
+		int giveOrReceive = clamp(sign(pressureDiff), 0, 1);
 		Element1 += lerp(Element1, source.Element1, giveOrReceive) * pressureDiff * canReachSource;
 	}
 };
@@ -33,43 +60,36 @@ Texture2D<float4> terrainMap;
 RWTexture2D<float4> output;
 
 
-void SortPressureArrayIndices(inout PixelContent neighbors[4], uint i1, uint i2){
-	half pMinIndex, pMaxIndex, pDeltaSign;
-	PixelContent neighbor1 = neighbors[i1];
-	PixelContent neighbor2 = neighbors[i2];
-
-	half p1 = abs(neighbor1.GetPressure());
-	half p2 = abs(neighbor2.GetPressure());
-	pDeltaSign = sign(p2 - p1);
-	pMaxIndex = lerp(i1, i2, pDeltaSign);
-	pMinIndex = lerp(i2, i1, pDeltaSign);
-
-	neighbor1 = neighbors[pMaxIndex];
-	neighbor2 = neighbors[pMinIndex];
-	neighbors[i1] = neighbor1;
-	neighbors[i2] = neighbor2;
-}
-void SortPressureArray(inout PixelContent neighbors[4]){
-	for(int i = 0; i < 3; i++){
-		for(int index1 = i, index2 = i + 1; index1 >= 0; index1--){
-			PixelContent neighbor1 = neighbors[index1];
-			PixelContent neighbor2 = neighbors[index2];
-			half p1 = abs(neighbor1.GetPressure());
-			half p2 = abs(neighbor2.GetPressure());
-			half pDeltaSign = sign(p2 - p1);
-			half pMaxIndex = lerp(index1, index2, pDeltaSign);
-			half pMinIndex = lerp(index2, index1, pDeltaSign);
-			neighbor1 = neighbors[pMaxIndex];
-			neighbor2 = neighbors[pMinIndex];
-			neighbors[index1] = neighbor1;
-			neighbors[index2] = neighbor2;
-		}
-	}
+uint GetPixelsContentIndex(uint3 id){
+	return GRID_WIDTH_PIXELS * id.y + id.x;
 }
 
+void GetPixelAndNeighbors(uint pixelsContentIndex, out PixelContent pixel, out PixelContent pixelAbove, out PixelContent pixelBelow, out PixelContent pixelRight, out PixelContent pixelLeft){
+	uint indexAbove = pixelsContentIndex + GRID_WIDTH_PIXELS;
+	uint indexBelow = pixelsContentIndex - GRID_WIDTH_PIXELS;
+	uint indexRight = pixelsContentIndex + 1;
+	uint indexLeft = pixelsContentIndex - 1;
+	pixel = pixelsContent[pixelsContentIndex];
+	pixelAbove = pixelsContent[indexAbove];
+	pixelBelow = pixelsContent[indexBelow];
+	pixelRight = pixelsContent[indexRight];
+	pixelLeft = pixelsContent[indexLeft];
+}
+
+void GetCanReachNeighbors(uint3 id, half isPixelFree, half isPixelFreeAbove, half isPixelFreeBelow, half isPixelFreeRight, half isPixelFreeLeft, out half canReachAbove, out half canReachBelow, out half canReachRight, out half canReachLeft){
+	canReachAbove = clamp(GRID_HEIGHT_PIXELS - 1 - id.y, 0, 1);
+	canReachBelow = clamp(id.y, 0, 1);
+	canReachRight = clamp(GRID_WIDTH_PIXELS - 1 - id.x, 0, 1);
+	canReachLeft = clamp(id.x, 0, 1);
+
+	canReachAbove = min(canReachAbove, isPixelFree * isPixelFreeAbove);
+	canReachBelow = min(canReachBelow, isPixelFree * isPixelFreeBelow);
+	canReachRight = min(canReachRight, isPixelFree * isPixelFreeRight);
+	canReachLeft  = min(canReachLeft, isPixelFree * isPixelFreeLeft);
+}
 
 [numthreads(32, 32, 1)]
-void Update (uint3 id : SV_DispatchThreadID){
+void Init(uint3 id : SV_DispatchThreadID){
 	uint2 pixelRelativeToTile = id.xy % PIXELS_PER_TILE_EDGE;
 	uint2 tilePos = (id.xy - pixelRelativeToTile) / PIXELS_PER_TILE_EDGE;
 	uint2 tilesPerEdge = GRID_WIDTH_PIXELS / PIXELS_PER_TILE_EDGE;
@@ -79,31 +99,42 @@ void Update (uint3 id : SV_DispatchThreadID){
 	
 	uint2 terrainMapBottomLeftIndex = uvs[uvsIndex] * TERRAINMAP_SIZE_PIXELS;
 	uint2 terrainMapIndex = terrainMapBottomLeftIndex + pixelRelativeToTile;
-	float4 terrainMapPixel = terrainMap[terrainMapIndex];
 
-	uint pixelsContentIndex = (GRID_WIDTH_PIXELS * id.y + id.x);
-	uint pixelsContentAbove = pixelsContentIndex + GRID_WIDTH_PIXELS;
-	uint pixelsContentBelow = pixelsContentIndex - GRID_WIDTH_PIXELS;
-	uint pixelsContentRight = pixelsContentIndex + 1;
-	uint pixelsContentLeft = pixelsContentIndex - 1;
+	uint pixelsContentIndex = GetPixelsContentIndex(id);
+	PixelContent pixel, pixelAbove, pixelBelow, pixelRight, pixelLeft; 
+	GetPixelAndNeighbors(pixelsContentIndex, pixel, pixelAbove, pixelBelow, pixelRight, pixelLeft);
 
-	PixelContent content = pixelsContent[pixelsContentIndex];
-	PixelContent contentAbove = pixelsContent[pixelsContentAbove];
-	PixelContent contentBelow = pixelsContent[pixelsContentBelow];
-	PixelContent contentRight = pixelsContent[pixelsContentRight];
-	PixelContent contentLeft = pixelsContent[pixelsContentLeft];
+	half canReachAbove, canReachBelow, canReachRight, canReachLeft;
+	GetCanReachNeighbors(id, pixel.IsFreeFromObstacles(), pixelAbove.IsFreeFromObstacles(), pixelBelow.IsFreeFromObstacles(), pixelRight.IsFreeFromObstacles(), pixelLeft.IsFreeFromObstacles(), canReachAbove, canReachBelow, canReachRight, canReachLeft);
+	
+	uint amountPixelsInReach = canReachAbove + canReachBelow + canReachRight + canReachLeft;
+	pixel.BaseDistribution = 1.0 / amountPixelsInReach;
+	pixel.TerrainMapPixel = terrainMap[terrainMapIndex];
+	pixel.Element1 *= pixel.IsFreeFromObstacles();
+	pixelsContent[pixelsContentIndex] = pixel;
+}
 
-	half canReachAbove = clamp(GRID_HEIGHT_PIXELS - 1 - id.y, 0, 1);
-	half canReachBelow = clamp(id.y, 0, 1);
-	half canReachRight = clamp(GRID_WIDTH_PIXELS - 1 - id.x, 0, 1);
-	half canReachLeft = clamp(id.x, 0, 1);
+[numthreads(32, 32, 1)]
+void Update (uint3 id : SV_DispatchThreadID){
+	uint pixelsContentIndex = GetPixelsContentIndex(id);
+	PixelContent pixel, pixelAbove, pixelBelow, pixelRight, pixelLeft; 
+	GetPixelAndNeighbors(pixelsContentIndex, pixel, pixelAbove, pixelBelow, pixelRight, pixelLeft);
 
-	content.SpreadContentFrom(contentAbove, canReachAbove);
-	content.SpreadContentFrom(contentBelow, canReachBelow);
-	content.SpreadContentFrom(contentRight, canReachRight);
-	content.SpreadContentFrom(contentLeft, canReachLeft);
 
-	pixelsContent[pixelsContentIndex] = content;
-	float4 outputColor = terrainMapPixel;// float4(0, 0, content.Element1, 1);
+	// NOTE: even if Elements can't reach, Temperature should be able to spread, right?
+	half canReachAbove, canReachBelow, canReachRight, canReachLeft;
+	GetCanReachNeighbors(id, pixel.IsFreeFromObstacles(), pixelAbove.IsFreeFromObstacles(), pixelBelow.IsFreeFromObstacles(), pixelRight.IsFreeFromObstacles(), pixelLeft.IsFreeFromObstacles(), canReachAbove, canReachBelow, canReachRight, canReachLeft);
+
+	half2 axisHorizontal = half2(1, 0);
+	half2 axisVertical = half2(0, 1);
+	half modVertical = 0.0;
+	half modHorizontal = 0.0;
+	pixel.SpreadContentFrom(pixelAbove, canReachAbove, modVertical, axisVertical);
+	pixel.SpreadContentFrom(pixelBelow, canReachBelow, modVertical, -axisVertical);
+	pixel.SpreadContentFrom(pixelRight, canReachRight, modHorizontal, axisHorizontal);
+	pixel.SpreadContentFrom(pixelLeft,  canReachLeft, modHorizontal, -axisHorizontal);
+
+	pixelsContent[pixelsContentIndex] = pixel;
+	float4 outputColor = float4(pixel.TerrainMapPixel.a, 0, pixel.Element1, 1);
 	output[id.xy] = outputColor;
 }

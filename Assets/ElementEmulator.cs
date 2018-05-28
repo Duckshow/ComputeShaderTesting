@@ -8,8 +8,12 @@ public class ElementEmulator : MonoBehaviour {
 		public float Element1;
 		public float Temperature;
 
+		public float BaseDistribution;
+		public Color TerrainMapPixel;
+		public Vector2 Wind;
+
 		public static int GetStride() {
-			return sizeof(float) * 2; // must correspond to variables!
+			return sizeof(float) * 9; // must correspond to variables!
 		}
 	}
 
@@ -30,6 +34,9 @@ public class ElementEmulator : MonoBehaviour {
 	private const int GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
 	private const int GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
 	//===============
+
+	private const string KERNEL_INIT = "Init";
+	private int kernelID_Init;
 
 	private const string KERNEL_UPDATE = "Update";
 	private int kernelID_Update;
@@ -59,8 +66,11 @@ public class ElementEmulator : MonoBehaviour {
 
 	private float nextTimeToUpdate = -1.0f;
 
+	private int flowPixelIndex = -1;
+
 
 	void Awake(){
+		kernelID_Init = shader.FindKernel(KERNEL_INIT);
 		kernelID_Update = shader.FindKernel(KERNEL_UPDATE);
 		threadCountAxis = (int)Mathf.Sqrt(THREAD_COUNT_MAX);
 		threadGroupCountX = GRID_WIDTH_PIXELS / threadCountAxis;
@@ -92,10 +102,6 @@ public class ElementEmulator : MonoBehaviour {
 	void InitShader(){
 		transform.localScale = new Vector3(GRID_WIDTH_TILES, GRID_HEIGHT_TILES, 1);
 
-		// output = new RenderTexture(GRID_WIDTH_PIXELS, GRID_HEIGHT_PIXELS, 24);
-		// output.enableRandomWrite = true;
-		// output.filterMode = FilterMode.Point;
-		// output.Create();
 		output = new RenderTexture(GRID_WIDTH_PIXELS, GRID_HEIGHT_PIXELS, 24);
 		output.enableRandomWrite = true;
 		output.filterMode = FilterMode.Point;
@@ -103,8 +109,8 @@ public class ElementEmulator : MonoBehaviour {
 
 		uvs = GetGridUVs();
 		bufferUVs = new ComputeBuffer(uvs.Length, sizeof(float) * 2);
-		// bufferUVs.SetData(uvs);
-		// shader.SetBuffer(kernelID_Update, shaderPropertyID_uvs, bufferUVs);
+		bufferUVs.SetData(uvs);
+		shader.SetBuffer(kernelID_Init, shaderPropertyID_uvs, bufferUVs);
 
 		pixelsContent = new PixelContent[GRID_WIDTH_PIXELS * GRID_HEIGHT_PIXELS];
 		for (int i = 0; i < pixelsContent.Length; i++){
@@ -113,34 +119,24 @@ public class ElementEmulator : MonoBehaviour {
 			pixel.Temperature = 1000.0f;
 			pixelsContent[i] = pixel;
 		}
-		pixelsContent[Random.Range(0, pixelsContent.Length)].Element1 = 1.0f;
-
 		bufferPixels = new ComputeBuffer(pixelsContent.Length, PixelContent.GetStride());
-		// bufferPixels.SetData(pixelsContent);
-		// shader.SetBuffer(kernelID_Update, shaderPropertyID_pixelsContent, bufferPixels);
+		
+		bufferPixels.SetData(pixelsContent);
+		shader.SetBuffer(kernelID_Init, shaderPropertyID_pixelsContent, bufferPixels);
 
-		// shader.SetTexture(kernelID_Update, shaderPropertyID_terrainMap, terrainMap);
-		// shader.SetTexture(kernelID_Update, shaderPropertyID_output, output);
+		shader.SetTexture(kernelID_Init, shaderPropertyID_terrainMap, terrainMap);
 
-		// bufferUVs.Dispose();
-		// bufferPixels.Dispose();
+		shader.Dispatch(kernelID_Init, threadGroupCountX, threadGroupCountY, 1);
+		bufferPixels.GetData(pixelsContent);
 	}
 
 	[EasyButtons.Button]
 	public void UpdateShader() {
-		transform.localScale = new Vector3(GRID_WIDTH_TILES, GRID_HEIGHT_TILES, 1);
-
-
-		//uvs = GetGridUVs();
-		//bufferUVs = new ComputeBuffer(uvs.Length, sizeof(float) * 2);
 		bufferUVs.SetData(uvs);
 		shader.SetBuffer(kernelID_Update, shaderPropertyID_uvs, bufferUVs);
 
-		// pixelsContent = new PixelContent[GRID_WIDTH_PIXELS * GRID_HEIGHT_PIXELS * 2];
-		// for (int i = 0; i < pixelsContent.Length; i++){
-		// 	pixelsContent[i].Element1 = Random.value;
-		// }
-		//bufferPixels = new ComputeBuffer(pixelsContent.Length, PixelContent.GetStride());
+		//pixelsContent[Random.Range(0, pixelsContent.Length)].Wind = new Vector2(0, 1);
+
 		bufferPixels.SetData(pixelsContent);
 		shader.SetBuffer(kernelID_Update, shaderPropertyID_pixelsContent, bufferPixels);
 
@@ -151,9 +147,6 @@ public class ElementEmulator : MonoBehaviour {
 		material.mainTexture = output;
 
 		bufferPixels.GetData(pixelsContent);
-
-		// bufferUVs.Dispose();
-		// bufferPixels.Dispose();
 	}
 
 	Vector2[] GetGridUVs(){
