@@ -8,12 +8,11 @@ public class ElementEmulator : MonoBehaviour {
 		public float Element1;
 		public float Temperature;
 
-		public float BaseDistribution;
-		public Color TerrainMapPixel;
-		public Vector2 Wind;
+		public Vector4 Wind;
+		public Vector4 TerrainMapPixel;
 
 		public static int GetStride() {
-			return sizeof(float) * 9; // must correspond to variables!
+			return sizeof(float) * 10; // must correspond to variables!
 		}
 	}
 
@@ -113,8 +112,21 @@ public class ElementEmulator : MonoBehaviour {
 		shader.SetBuffer(kernelID_Init, shaderPropertyID_uvs, bufferUVs);
 
 		pixelsContent = new PixelContent[GRID_WIDTH_PIXELS * GRID_HEIGHT_PIXELS];
+		int x = 0, y = 0;
 		for (int i = 0; i < pixelsContent.Length; i++){
+			if (i > 0){
+				x++;
+				if (x > GRID_WIDTH_PIXELS){
+					x = 0;
+					y++;
+				}
+			}
+			float perlinMod = 4.0f;
+			float perlinX = ((float)x / (float)GRID_WIDTH_PIXELS) * perlinMod * 3.0f;
+			float perlinY = ((float)y / (float)GRID_HEIGHT_PIXELS) * perlinMod;
+
 			PixelContent pixel = pixelsContent[i];
+			pixel.Element1 = Mathf.Pow(Mathf.PerlinNoise(perlinX, perlinY), 1);
 			pixel.Element1 = Random.value;
 			pixel.Temperature = 1000.0f;
 			pixelsContent[i] = pixel;
