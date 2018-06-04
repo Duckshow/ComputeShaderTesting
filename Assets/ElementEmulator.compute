@@ -35,15 +35,38 @@ struct PixelContent{ // WARNING: variables must correspond to ElementEmulator.cs
 		return directedWind.x + directedWind.y + directedWind.z + directedWind.w;
 	}
 
-	void ApplyNeighborWind(inout half windFore, inout half windBack, inout half windSide1, inout half windSide2, half pressureFore, half pressureBack, half pressureSide1, half pressureSide2, half windIncoming, bool canReachForward, bool canReachBack, bool canReachSide1, bool canReachSide2){
-		half delta = canReachForward * (pressureFore - clamp(pressureFore - windIncoming, 0, 1));
-		windFore -= delta * clamp(canReachBack + canReachSide1 + canReachSide2, 0, 1);
-		windBack += delta * canReachBack;
-
-		half reachableSideCountMod = 1.0 / (canReachSide1 + canReachSide2);
-		windSide1 += delta * canReachSide1 * (1 - canReachBack) * reachableSideCountMod;
-		windSide2 += delta * canReachSide2 * (1 - canReachBack) * reachableSideCountMod;
+	half GetDistribution(half4 direction){
+		half wind = GetWindInDirection(direction);
+		return clamp(0.25 + wind, 0, 1);
 	}
+	
+	half4 GetDistributionAllDirection(){
+		return clamp(0.25 + Wind, 0, 1);
+	}
+
+	half GetPressure(half4 direction){
+		return Element1 * GetDistribution(direction);// * (Temperature / TEMPERATURE_MAX); // add Elements, multiply with Temperature
+	}
+
+	half4 GetPressureAllDirections(){
+		return Element1 * GetDistributionAllDirection();
+	}
+
+	void ApplyNeighborWind(inout half windFore, inout half windBack, inout half windSide1, inout half windSide2, half pressureFore, half pressureBack, half pressureSide1, half pressureSide2, half windIncoming, bool canReachForward, bool canReachBack, bool canReachSide1, bool canReachSide2){
+		// canReachForward = 1;
+		// canReachBack = 1;
+		// canReachSide1 = 1;
+		// canReachSide2 = 1;
+	
+		half delta = (pressureFore - clamp(pressureFore - windIncoming, 0, 1));
+		windFore -= delta * canReachForward * canReachBack;// clamp(canReachBack + canReachSide1 + canReachSide2, 0, 1);
+		windBack += delta * canReachForward * canReachBack;
+
+		// half reachableSideCountMod = 1.0 / (canReachSide1 + canReachSide2);
+		// windSide1 += delta * canReachSide1 * (1 - canReachBack) * reachableSideCountMod;
+		// windSide2 += delta * canReachSide2 * (1 - canReachBack) * reachableSideCountMod;
+	}
+
 
 	void UpdateWind(half windFromUp, half windFromDown, half windFromRight, half windFromLeft, bool canReachUp, bool canReachDown, bool canReachRight, bool canReachLeft){
 		half4 pressure = GetPressureAllDirections();
@@ -51,17 +74,6 @@ struct PixelContent{ // WARNING: variables must correspond to ElementEmulator.cs
 		ApplyNeighborWind(Wind.y, Wind.x, Wind.z, Wind.w, pressure.y, pressure.x, pressure.z, pressure.w, windFromDown, canReachDown, canReachUp, canReachRight, canReachLeft);
 		ApplyNeighborWind(Wind.z, Wind.w, Wind.x, Wind.y, pressure.z, pressure.w, pressure.x, pressure.y, windFromRight, canReachRight, canReachLeft, canReachUp, canReachDown);
 		ApplyNeighborWind(Wind.w, Wind.z, Wind.x, Wind.y, pressure.w, pressure.z, pressure.x, pressure.y, windFromLeft, canReachLeft, canReachRight, canReachUp, canReachDown);
-	}
-
-	half GetPressure(half4 pressureDirection){
-		half4 windDirected = Wind * pressureDirection;
-		half windInDirection = windDirected.x + windDirected.y + windDirected.z + windDirected.w;
-
-		return Element1 * windInDirection;// * (Temperature / TEMPERATURE_MAX); // add Elements, multiply with Temperature
-	}
-
-	half4 GetPressureAllDirections(){
-		return Element1 * Wind;
 	}
 	
 	void ApplySpreadFromNeighbor(bool canReach, PixelContent neighbor, half4 directionToNeighbor, half4 directionFromNeighbor){
@@ -160,6 +172,6 @@ void Update (uint3 id : SV_DispatchThreadID){
 
 	pixelsContent[pixelsContentIndex] = pixel;
 	float4 outputColor = float4(pixel.TerrainMapPixel.a, 0, pixel.Element1, 1);
-	//output[id.xy] = outputColor;
-	output[id.xy] = float4(pixel.Wind.x, pixel.Wind.y, pixel.Wind.w, 1);
+	output[id.xy] = outputColor;
+	//output[id.xy] = float4(pixel.Wind.x, pixel.Wind.y, pixel.Wind.w, 1);
 }

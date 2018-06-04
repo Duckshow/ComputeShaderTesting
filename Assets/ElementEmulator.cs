@@ -168,4 +168,12 @@ public class ElementEmulator : MonoBehaviour {
 		uvs[2] = new Vector2((1.0f / 3.0f) * 2.0f, 0);
 		return uvs;
 	}
+
+	public float GetGridDiagnosis() {
+		float element1Total = 0;
+		for (int i = 0; i < pixelsContent.Length; i++){
+			element1Total += pixelsContent[i].Element1;
+		}
+		return element1Total;
+	}
 }
