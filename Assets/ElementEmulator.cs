@@ -147,7 +147,7 @@ public class ElementEmulator : MonoBehaviour {
 		bufferUVs.SetData(uvs);
 		shader.SetBuffer(kernelID_Update, shaderPropertyID_uvs, bufferUVs);
 
-		//pixelsContent[Random.Range(0, pixelsContent.Length)].Wind = new Vector2(0, 1);
+		pixelsContent[Random.Range(0, pixelsContent.Length)].Wind = new Vector4(1, 0, 0, 0);
 
 		bufferPixels.SetData(pixelsContent);
 		shader.SetBuffer(kernelID_Update, shaderPropertyID_pixelsContent, bufferPixels);
@@ -171,9 +171,13 @@ public class ElementEmulator : MonoBehaviour {
 
 	public float GetGridDiagnosis() {
 		float element1Total = 0;
+		float highest = -10000;
 		for (int i = 0; i < pixelsContent.Length; i++){
+			if(pixelsContent[i].Element1 > highest) highest = pixelsContent[i].Element1;
 			element1Total += pixelsContent[i].Element1;
 		}
+
+		Debug.Log(highest);
 		return element1Total;
 	}
 }
