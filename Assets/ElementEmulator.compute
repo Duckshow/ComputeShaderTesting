@@ -56,57 +56,111 @@ struct PixelContent{ // WARNING: variables must correspond to ElementEmulator.cs
 		return 1.0 / (Element1);
 	}
 
-	void ApplyNeighborWind(inout half windFore, inout half windBack, inout half windSide1, inout half windSide2, half windIncoming, half densityIncoming, bool canReachForward, bool canReachBack, bool canReachSide1, bool canReachSide2){
-		// canReachForward = 1;
-		// canReachBack = 1;
-		// canReachSide1 = 1;
-		// canReachSide2 = 1;
+	// void ApplyNeighborWind(inout half windFore, inout half windBack, inout half windSide1, inout half windSide2, half windIncoming, half densityIncoming, bool canReachForward, bool canReachBack, bool canReachSide1, bool canReachSide2){
+	// 	// canReachForward = 1;
+	// 	// canReachBack = 1;
+	// 	// canReachSide1 = 1;
+	// 	// canReachSide2 = 1;
 	
-		// half delta = clamp(windIncoming, 0, windFore);
-		// windFore -= delta * canReachForward * canReachBack;// clamp(canReachBack + canReachSide1 + canReachSide2, 0, 1);
-		// windBack += delta * canReachForward * canReachBack;
+	// 	// half delta = clamp(windIncoming, 0, windFore);
+	// 	// windFore -= delta * canReachForward * canReachBack;// clamp(canReachBack + canReachSide1 + canReachSide2, 0, 1);
+	// 	// windBack += delta * canReachForward * canReachBack;
+
+	// 	half density = GetDensity();
+	// 	half windIncomingForceMod = densityIncoming / density;
+	// 	windIncoming *= windIncomingForceMod;// * canReachForward * canReachBack;
+
+	// 	half windForeResult = clamp(windFore - windIncoming * canReachForward, 0, 1);
+	// 	half windForeDelta = windFore - windForeResult;
+	// 	windFore = windForeResult;
+	// 	windBack = clamp(windBack + (windIncoming - windForeDelta) * canReachBack, 0, 1);
+
+
+	// 	// half reachableSideCountMod = 1.0 / (canReachSide1 + canReachSide2);
+	// 	// windSide1 += delta * canReachSide1 * (1 - canReachBack) * reachableSideCountMod;
+	// 	// windSide2 += delta * canReachSide2 * (1 - canReachBack) * reachableSideCountMod;
+	// }
+	void UpdateWind(half4 incomingWind, half4 incomingDensity, bool4 canReach){
 
 		half density = GetDensity();
-		half windIncomingForceMod = densityIncoming / density;
-		windIncoming *= windIncomingForceMod * canReachForward * canReachBack;
+		half4 momentum = Wind * density;
+		half4 incomingMomentum = incomingWind * incomingDensity;
 
-		half windForeResult = clamp(windFore - windIncoming, 0, 1);
-		half windForeDelta = windFore - windForeResult;
-		windFore = windForeResult;
-		windBack = clamp(windBack + (windIncoming - windForeDelta), 0, 1);
+		incomingMomentum *= canReach;
+		incomingMomentum = clamp(incomingMomentum, 0, 1);
+
+		half4 remainingMomentum;
+		remainingMomentum.x = momentum.x - incomingMomentum.x;
+		remainingMomentum.y = momentum.y - incomingMomentum.y;
+		remainingMomentum.z = 0;
+		remainingMomentum.w = 0;
+
+		half4 momentumDelta;
+		momentumDelta.x = momentum.x - remainingMomentum.x;
+		momentumDelta.y = momentum.y - remainingMomentum.y;
+
+		half4 remainingIncomingMomentum;
+		remainingIncomingMomentum.x = incomingMomentum.x - momentumDelta.x;
+		remainingIncomingMomentum.y = incomingMomentum.y - momentumDelta.y;
+		remainingIncomingMomentum.z = 0;
+		remainingIncomingMomentum.w = 0;
+
+		momentum = remainingMomentum;
+
+		momentum.x = max(momentum.x, remainingIncomingMomentum.y); 
+		momentum.y = max(momentum.y, remainingIncomingMomentum.x); 
+
+		Wind = 1;// clamp(momentum / density, 0, 1);
 
 
-		// half reachableSideCountMod = 1.0 / (canReachSide1 + canReachSide2);
-		// windSide1 += delta * canReachSide1 * (1 - canReachBack) * reachableSideCountMod;
-		// windSide2 += delta * canReachSide2 * (1 - canReachBack) * reachableSideCountMod;
+		// half density = GetDensity();
+		// half4 windIncomingForceMods = half4(incomingDensity.x / density, incomingDensity.y / density, incomingDensity.z / density, incomingDensity.w / density);
+		// incomingWind *= windIncomingForceMods * canReach;
+		// incomingWind = clamp(incomingWind, 0, 1);
+
+		// half4 remainingWind;
+		// remainingWind.x = Wind.x - incomingWind.x;
+		// remainingWind.y = Wind.y - incomingWind.y;
+
+		// half4 windDelta;
+		// windDelta.x = Wind.x - remainingWind.x;
+		// windDelta.y = Wind.y - remainingWind.y;
+
+		// half4 remainingIncomingWind;
+		// remainingIncomingWind.x = incomingWind.x - windDelta.x;
+		// remainingIncomingWind.y = incomingWind.y - windDelta.y;
+
+		// Wind.x = clamp(remainingWind.x + remainingIncomingWind.y, 0, 1);
+		// Wind.y = clamp(remainingWind.y + remainingIncomingWind.x, 0, 1);
 	}
 
 
-	void UpdateWind(half windFromUp, half windFromDown, half windFromRight, half windFromLeft, half densityFromUp, half densityFromDown, half densityFromRight, half densityFromLeft, bool canReachUp, bool canReachDown, bool canReachRight, bool canReachLeft){
-		//half4 pressure = GetPressureAllDirections();
-		ApplyNeighborWind(Wind.x, Wind.y, Wind.z, Wind.w, windFromUp, densityFromUp, canReachUp, canReachDown, canReachRight, canReachLeft);
-		// ApplyNeighborWind(Wind.y, Wind.x, Wind.z, Wind.w, pressure.y, pressure.x, pressure.z, pressure.w, windFromDown, canReachDown, canReachUp, canReachRight, canReachLeft);
-		// ApplyNeighborWind(Wind.z, Wind.w, Wind.x, Wind.y, pressure.z, pressure.w, pressure.x, pressure.y, windFromRight, canReachRight, canReachLeft, canReachUp, canReachDown);
-		// ApplyNeighborWind(Wind.w, Wind.z, Wind.x, Wind.y, pressure.w, pressure.z, pressure.x, pressure.y, windFromLeft, canReachLeft, canReachRight, canReachUp, canReachDown);
-	}
+	// void UpdateWind(half windFromUp, half windFromDown, half windFromRight, half windFromLeft, half densityFromUp, half densityFromDown, half densityFromRight, half densityFromLeft, bool canReachUp, bool canReachDown, bool canReachRight, bool canReachLeft){
+	// 	//half4 pressure = GetPressureAllDirections();
+	// 	ApplyNeighborWind(Wind.x, Wind.y, Wind.z, Wind.w, windFromUp, densityFromUp, canReachUp, canReachDown, canReachRight, canReachLeft);
+	// 	ApplyNeighborWind(Wind.y, Wind.x, Wind.z, Wind.w, windFromDown, densityFromDown, canReachDown, canReachUp, canReachRight, canReachLeft);
+	// 	// ApplyNeighborWind(Wind.z, Wind.w, Wind.x, Wind.y, pressure.z, pressure.w, pressure.x, pressure.y, windFromRight, canReachRight, canReachLeft, canReachUp, canReachDown);
+	// 	// ApplyNeighborWind(Wind.w, Wind.z, Wind.x, Wind.y, pressure.w, pressure.z, pressure.x, pressure.y, windFromLeft, canReachLeft, canReachRight, canReachUp, canReachDown);
+	// }
 	
-	void ApplySpreadFromNeighbor(bool canReach, PixelContent neighbor, half4 directionToNeighbor, half4 directionFromNeighbor){
+	half ApplySpreadFromNeighbor(bool canReach, PixelContent neighbor, half4 directionToNeighbor, half4 directionFromNeighbor){
 		half wind = GetWindInDirection(directionToNeighbor);
-		bool giveOrReceive = ceil(wind);
-		Element1 += lerp(Element1, neighbor.Element1, giveOrReceive) * wind * canReach;
+		half windNeighbor = neighbor.GetWindInDirection(directionFromNeighbor);
+		bool receiveOrGive = ceil(wind);
+		return lerp(neighbor.Element1 * windNeighbor, -Element1 * wind, receiveOrGive) * canReach;
 	}
 
-	void GetCanReachNeighbors(uint3 id, PixelContent pixel, PixelContent pixelUp, PixelContent pixelDown, PixelContent pixelRight, PixelContent pixelLeft, out bool canReachAbove, out bool canReachBelow, out bool canReachRight, out bool canReachLeft){
-		canReachAbove = clamp(GRID_HEIGHT_PIXELS - 1 - id.y, 0, 1);
-		canReachBelow = clamp(id.y, 0, 1);
-		canReachRight = clamp(GRID_WIDTH_PIXELS - 1 - id.x, 0, 1);
-		canReachLeft = clamp(id.x, 0, 1);
+	void GetCanReachNeighbors(uint3 id, PixelContent pixel, PixelContent pixelUp, PixelContent pixelDown, PixelContent pixelRight, PixelContent pixelLeft, out bool4 canReach){
+		canReach.x = clamp(GRID_HEIGHT_PIXELS - 1 - id.y, 0, 1);
+		canReach.y = clamp(id.y, 0, 1);
+		canReach.z = clamp(GRID_WIDTH_PIXELS - 1 - id.x, 0, 1);
+		canReach.w = clamp(id.x, 0, 1);
 
 		bool isPixelFree = pixel.IsFreeFromObstacles();
-		canReachAbove = min(canReachAbove, isPixelFree * pixelUp.IsFreeFromObstacles());
-		canReachBelow = min(canReachBelow, isPixelFree * pixelDown.IsFreeFromObstacles());
-		canReachRight = min(canReachRight, isPixelFree * pixelRight.IsFreeFromObstacles());
-		canReachLeft  = min(canReachLeft, isPixelFree * pixelLeft.IsFreeFromObstacles());
+		canReach.x = min(canReach.x, isPixelFree * pixelUp.IsFreeFromObstacles());
+		canReach.y = min(canReach.y, isPixelFree * pixelDown.IsFreeFromObstacles());
+		canReach.z = min(canReach.z, isPixelFree * pixelRight.IsFreeFromObstacles());
+		canReach.w = min(canReach.w, isPixelFree * pixelLeft.IsFreeFromObstacles());
 	}
 
 	void SpreadContentFromNeighbors(uint3 id, PixelContent pixel, PixelContent pixelUp, PixelContent pixelDown, PixelContent pixelRight, PixelContent pixelLeft){
@@ -117,16 +171,30 @@ struct PixelContent{ // WARNING: variables must correspond to ElementEmulator.cs
 
 
 		// NOTE: even if Elements can't reach, Temperature should be able to spread, right?
-		bool canReachUp, canReachDown, canReachRight, canReachLeft;
-		GetCanReachNeighbors(id, pixel, pixelUp, pixelDown, pixelRight, pixelLeft, canReachUp, canReachDown, canReachRight, canReachLeft);
+		bool4 canReach;
+		GetCanReachNeighbors(id, pixel, pixelUp, pixelDown, pixelRight, pixelLeft, canReach);
 
-		UpdateWind(pixelUp.GetWindInDirection(down), pixelDown.GetWindInDirection(up), pixelRight.GetWindInDirection(left), pixelLeft.GetWindInDirection(right), pixelUp.GetDensity(), pixelDown.GetDensity(), pixelRight.GetDensity(), pixelLeft.GetDensity(), canReachUp, canReachDown, canReachRight, canReachLeft);
+		half4 incomingWind;
+		incomingWind.x = pixelUp.GetWindInDirection(down);
+		incomingWind.y = pixelDown.GetWindInDirection(up);
+		incomingWind.z = pixelRight.GetWindInDirection(left);
+		incomingWind.w = pixelLeft.GetWindInDirection(right);
+
+		half4 incomingDensity;
+		incomingDensity.x = pixelUp.GetDensity();
+		incomingDensity.y = pixelDown.GetDensity();
+		incomingDensity.z = pixelRight.GetDensity();
+		incomingDensity.w = pixelLeft.GetDensity();
+		UpdateWind(incomingWind, incomingDensity, canReach);
+		//UpdateWind(pixelUp.GetWindInDirection(down), pixelDown.GetWindInDirection(up), pixelRight.GetWindInDirection(left), pixelLeft.GetWindInDirection(right), pixelUp.GetDensity(), pixelDown.GetDensity(), pixelRight.GetDensity(), pixelLeft.GetDensity(), canReachUp, canReachDown, canReachRight, canReachLeft);
 		//Wind = half4(0.25, 0.25, 0.25, 0.25);
 
-		ApplySpreadFromNeighbor(canReachUp, pixelUp, up, down);
-		ApplySpreadFromNeighbor(canReachDown, pixelDown, down, up);
-		ApplySpreadFromNeighbor(canReachRight, pixelRight, right, left);
-		ApplySpreadFromNeighbor(canReachLeft, pixelLeft, left, right);
+		half delta = Element1;
+		delta += ApplySpreadFromNeighbor(canReach.x, pixelUp, up, down);
+		delta += ApplySpreadFromNeighbor(canReach.y, pixelDown, down, up);
+		delta += ApplySpreadFromNeighbor(canReach.z, pixelRight, right, left);
+		delta += ApplySpreadFromNeighbor(canReach.w, pixelLeft, left, right);
+		Element1 = delta;
 	}
 };
 
@@ -168,7 +236,7 @@ void Init(uint3 id : SV_DispatchThreadID){
 	PixelContent pixel, pixelAbove, pixelBelow, pixelRight, pixelLeft; 
 	GetPixelAndNeighbors(pixelsContentIndex, pixel, pixelAbove, pixelBelow, pixelRight, pixelLeft);
 
-	pixel.Wind = half4(0.0, 0.0, 0.0, 0.0);
+	//pixel.Wind = half4(0.0, 0.0, 0.0, 0.0);
 	pixel.TerrainMapPixel = terrainMap[terrainMapIndex];
 	pixel.Element1 *= pixel.IsFreeFromObstacles();
 	pixelsContent[pixelsContentIndex] = pixel;

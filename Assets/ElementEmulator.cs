@@ -128,6 +128,7 @@ public class ElementEmulator : MonoBehaviour {
 			PixelContent pixel = pixelsContent[i];
 			pixel.Element1 = Mathf.Pow(Mathf.PerlinNoise(perlinX, perlinY), 1);
 			pixel.Element1 = Random.value;
+			pixel.Wind = new Vector4(0, Random.value, 0, 0);
 			pixel.Temperature = 1000.0f;
 			pixelsContent[i] = pixel;
 		}
@@ -147,7 +148,7 @@ public class ElementEmulator : MonoBehaviour {
 		bufferUVs.SetData(uvs);
 		shader.SetBuffer(kernelID_Update, shaderPropertyID_uvs, bufferUVs);
 
-		pixelsContent[Random.Range(0, pixelsContent.Length)].Wind = new Vector4(1, 0, 0, 0);
+		//pixelsContent[Random.Range(0, pixelsContent.Length)].Wind = new Vector4(1, 0, 0, 0);
 
 		bufferPixels.SetData(pixelsContent);
 		shader.SetBuffer(kernelID_Update, shaderPropertyID_pixelsContent, bufferPixels);
