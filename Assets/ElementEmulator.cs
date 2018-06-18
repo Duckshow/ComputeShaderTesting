@@ -53,7 +53,6 @@ public class ElementEmulator : MonoBehaviour {
 	private int shaderPropertyID_output;
 
 	private int threadCountAxis;
-
 	private int threadGroupCountX;
 	private int threadGroupCountY;
 

@@ -1,0 +1,143 @@
+﻿#pragma kernel Integrate
+#pragma kernel ComputeDensityAndPressure
+#pragma kernel ComputeForces
+#pragma kernel RenderToTexture
+
+// ============== WARNING: shared with ElementSimulator.cs! must be equal!
+static const int PIXELS_PER_TILE_EDGE = 32;
+static const int GRID_WIDTH_TILES = 3;
+static const int GRID_HEIGHT_TILES = 1;
+static const int GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
+static const int GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
+//===============
+
+// solver parameters
+static const float PI = 3.14159265;
+static const float2 G = float2(0.0, 12000.0 * -9.8); // external (gravitational) forces
+static const float REST_DENS = 1000.0; // rest density
+static const float GAS_CONST = 2000.0; // const for equation of state
+static const float H = 16.0; // kernel radius
+static const float HSQ = H * H; // radius^2 for optimization
+static const float MASS = 65.0; // assume all particles have the same mass
+static const float VISC = 250.0; // viscosity constant
+static const float DT = 0.0008; // integration timestep
+
+// smoothing kernels defined in Müller and their gradients
+static const float POLY6 = 315.0 / (65.0 * PI * pow(H, 9.0));
+static const float SPIKY_GRAD = -45.0 / (PI * pow(H, 6.0));
+static const float VISC_LAP = 45.0 / (PI * pow(H, 6.0));
+
+// simulation parameters
+static const float EPS = H; // boundary epsilon
+static const float BOUND_DAMPING = -0.5;
+
+struct ElementParticle{ // WARNING: variables must correspond to ElementSimulator.cs's PixelContent!
+	float2 pos;
+	float2 velocity; 
+	float2 force;
+	float density;
+	float pressure;
+	half isAlive;
+
+	void TryApplyChanges(ElementParticle particle, half shouldApply){
+		pos 		= lerp(pos, 		particle.pos, 		shouldApply);
+		velocity 	= lerp(velocity, 	particle.velocity, 	shouldApply);
+		force 		= lerp(force, 		particle.force, 	shouldApply);
+		density 	= lerp(density, 	particle.density, 	shouldApply);
+		pressure 	= lerp(pressure, 	particle.pressure, 	shouldApply);
+		isAlive		= lerp(isAlive,		particle.isAlive,	shouldApply);
+	}
+};
+
+
+int particleCount;
+RWStructuredBuffer<ElementParticle> particles;
+RWTexture2D<float4> output;
+
+float GetNormSquared(float2 v){
+	return pow(v.x, 2) + pow(v.y, 2);
+}
+
+float GetNorm(float2 v) {
+	return sqrt(GetNormSquared(v));
+}
+
+[numthreads(64, 1, 1)]
+void ComputeDensityAndPressure(uint3 id : SV_DispatchThreadID) {
+	ElementParticle particle = particles[id.x];
+
+	particle.density = 0.0;
+	for (int i = 0; i < particleCount; i++){ // optimization: replace with grid and iterating over particles in neighboring grid-tiles
+		ElementParticle otherParticle = particles[i];
+		float2 dir = otherParticle.pos - particle.pos;
+		float r2 = GetNormSquared(dir);
+
+		// this computation is symmetric
+		half isHSQEqualOrGreaterToR2 = clamp(sign(HSQ - r2), 0, 1);
+		particle.density += isHSQEqualOrGreaterToR2 * MASS * POLY6 * pow(HSQ - r2, 3.0);
+	}
+
+	particle.pressure = GAS_CONST * (particle.density - REST_DENS);
+	particles[id.x].TryApplyChanges(particle, particle.isAlive);
+}
+
+[numthreads(64, 1, 1)]
+void ComputeForces(uint3 id : SV_DispatchThreadID) {
+	ElementParticle particle = particles[id.x];
+
+	float2 fpress = float2(0.0, 0.0);
+	float2 fvisc = float2(0.0, 0.0);
+	for (int i = 0; i < particleCount; i++){ // optimization: replace with grid and iterating over particles in neighboring grid-tiles
+		ElementParticle otherParticle = particles[i];
+
+		float2 dir = otherParticle.pos - particle.pos;
+		float r = GetNorm(dir);
+
+		half isHGreaterOrEqualToR = clamp(sign(H - r), 0, 1);
+		half areParticlesDifferent = clamp(ceil(abs((otherParticle.pos.x - particle.pos.x) + otherParticle.pos.y - particle.pos.y)), 0, 1);
+
+		// compute pressure force contribution
+		fpress += isHGreaterOrEqualToR * areParticlesDifferent * -normalize(dir) * MASS * (particle.pressure + otherParticle.pressure) / (2.0 * otherParticle.density) * SPIKY_GRAD * pow(H - r, 2.0);
+		// compute viscosity force contribution
+		fvisc += isHGreaterOrEqualToR * areParticlesDifferent * VISC * MASS * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
+	}
+
+	float2 fgrav = G * particle.density;
+	particle.force = fpress + fvisc + fgrav;
+	particles[id.x].TryApplyChanges(particle, particle.isAlive);
+}
+
+
+[numthreads(64, 1, 1)]
+void Integrate(uint3 id : SV_DispatchThreadID) {
+	ElementParticle particle = particles[id.x];
+
+	// forward Euler integration
+	particle.velocity += DT * particle.force / particle.density;
+	particle.pos += DT * particle.velocity;
+
+	// enforce boundary conditions
+	half isXWithinLeftBorder = clamp(sign(particle.pos.x - EPS), 0, 1);
+	particle.velocity.x = lerp(particle.velocity.x * BOUND_DAMPING, particle.velocity.x, isXWithinLeftBorder);
+	particle.pos.x = lerp(EPS, particle.pos.x, isXWithinLeftBorder);
+	
+	half isXWithinRightBorder = clamp(sign(GRID_WIDTH_PIXELS - (particle.pos.x + EPS)), 0, 1);
+	particle.velocity.x = lerp(particle.velocity.x * BOUND_DAMPING, particle.velocity.x, isXWithinRightBorder);
+	particle.pos.x = lerp(GRID_WIDTH_PIXELS - EPS, particle.pos.x, isXWithinRightBorder);
+
+	half isYWithinBottomBorder = clamp(sign(particle.pos.y - EPS), 0, 1);
+	particle.velocity.y = lerp(particle.velocity.y * BOUND_DAMPING, particle.velocity.y, isYWithinBottomBorder);
+	particle.pos.y = lerp(EPS, particle.pos.y, isYWithinBottomBorder);
+
+	half isYWithinTopBorder = clamp(sign(GRID_HEIGHT_PIXELS - (particle.pos.y + EPS)), 0, 1);
+	particle.velocity.y = lerp(particle.velocity.y * BOUND_DAMPING, particle.velocity.y, isYWithinTopBorder);
+	particle.pos.y = lerp(GRID_HEIGHT_PIXELS - EPS, particle.pos.y, isYWithinTopBorder);
+
+	particles[id.x].TryApplyChanges(particle, particle.isAlive);
+}
+
+[numthreads(64, 1, 1)]
+void RenderToTexture(uint3 id : SV_DispatchThreadID) {
+	ElementParticle particle = particles[id.x];
+	output[particle.pos] = float4(0, 0, particle.isAlive, particle.isAlive);
+}
