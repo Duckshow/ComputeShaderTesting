@@ -25,10 +25,10 @@ public class ElementSimulator : MonoBehaviour {
 	};
 
 	// solver parameters
-	private static readonly Vector2 G = new Vector2(0.0f, 12000.0f * -9.8f); // external (gravitational) forces
+	private static readonly Vector2 G = new Vector2(0, 12000 * -9.8f); // external (gravitational) forces
 	private const float REST_DENS = 1000.0f; // rest density
 	private const float GAS_CONST = 2000.0f; // const for equation of state
-	private const float H = 16.0f; // kernel radius
+	private const float H = 16.0f; // interaction radius
 	private const float HSQ = H * H; // radius^2 for optimization
 	private const float MASS = 65.0f; // assume all particles have the same mass
 	private const float VISC = 250.0f; // viscosity constant
@@ -42,14 +42,14 @@ public class ElementSimulator : MonoBehaviour {
 	// simulation parameters
 	private const float EPS = H; // boundary epsilon
 	private const float BOUND_DAMPING = -0.5f;
-	private const int DAM_PARTICLES = 500;
-	private const int MAX_PARTICLES = 1000;
-	private const int BLOCK_PARTICLES = 50;
+	private const int DAM_PARTICLES = 1000;
+	private const int MAX_PARTICLES = 500;
+	private const int BLOCK_PARTICLES = 1000;
 
 	// ============== WARNING: shared with ElementEmulator.compute! must be equal!
-	private const int PIXELS_PER_TILE_EDGE = 32;
-	private const int GRID_WIDTH_TILES = 3;
-	private const int GRID_HEIGHT_TILES = 1;
+	private const int PIXELS_PER_TILE_EDGE = 256;
+	private const int GRID_WIDTH_TILES = 4;
+	private const int GRID_HEIGHT_TILES = 3;
 	private const int GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
 	private const int GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
 	//===============
@@ -63,6 +63,8 @@ public class ElementSimulator : MonoBehaviour {
 	private ComputeShader shader;
 	[SerializeField]
 	private Material material;
+    [SerializeField]
+    private ParticleSystem particleSystem;
 
 	// private int threadCountAxis;
 	// private int threadGroupCountX;
@@ -128,9 +130,10 @@ public class ElementSimulator : MonoBehaviour {
 		List<ElementParticle> startParticles = new List<ElementParticle>();
 
 		for (float y = EPS; y < GRID_HEIGHT_PIXELS - EPS * 2.0f; y += H) {
-			for (float x = GRID_WIDTH_PIXELS / 4.0f; x <= GRID_WIDTH_PIXELS / 2.0f; x += H) {
-				if (startParticles.Count < DAM_PARTICLES){
-					float jitter = Random.value;
+			for (float x = EPS; x < GRID_WIDTH_PIXELS * 0.5f - EPS * 2.0f; x += H) {
+				if (startParticles.Count < Mathf.Min(DAM_PARTICLES, MAX_PARTICLES)){
+                   // if(Random.value < (x / GRID_WIDTH_PIXELS) * 4) continue;
+					float jitter = Random.value / H;
 					startParticles.Add(new ElementParticle(x + jitter, y));
 				}
 			}
@@ -139,7 +142,7 @@ public class ElementSimulator : MonoBehaviour {
 		particles = startParticles.ToArray();
 	}
 
-	void Update () {
+	void FixedUpdate () {
 		GetInput();
 
 		// bufferElementParticles.SetData(particles);
@@ -168,13 +171,81 @@ public class ElementSimulator : MonoBehaviour {
 		ComputeDensityAndPressure();
 		ComputeForces();
 		Integrate();
+
+        particleSystem.Clear();
+        ParticleSystem.MainModule main = particleSystem.main;
+        main.startSize = H * 2;
+        particleSystem.Emit(particles.Length);
+
+        ParticleSystem.Particle[] emittedParticles = new ParticleSystem.Particle[particleSystem.particleCount];
+        particleSystem.GetParticles(emittedParticles);
+        for (int i = 0; i < particleSystem.particleCount; i++){
+            emittedParticles[i].position = particles[i].pos;
+        }
+        particleSystem.SetParticles(emittedParticles, particleSystem.particleCount);
 	}
 	
-	void Integrate() {
+	void ComputeDensityAndPressure() {
+		for (int i = 0; i < particles.Length; i++){
+			ElementParticle particle = particles[i];
+
+			particle.density = 0.0f;
+			for (int i2 = 0; i2 < particles.Length; i2++){ // optimization: replace with grid and iterating over particles in neighboring grid-tiles
+				ElementParticle otherParticle = particles[i2];
+				Vector2 dir = otherParticle.pos - particle.pos;
+				float r2 = dir.sqrMagnitude;
+
+				if (r2 < HSQ){
+					// this computation is symmetric
+					particle.density += MASS * POLY6 * Mathf.Pow(HSQ - r2, 3.0f);
+				}
+			}
+
+			particle.pressure = GAS_CONST * (particle.density - REST_DENS);
+			particles[i] = particle;
+		}
+	}
+	
+	void ComputeForces() {
+		for (int i = 0; i < particles.Length; i++){
+			ElementParticle particle = particles[i];
+			Vector2 fpress = new Vector2();
+			Vector2 fvisc = new Vector2();
+			for (int i2 = 0; i2 < particles.Length; i2++){ // optimization: replace with grid and iterating over particles in neighboring grid-tiles
+				ElementParticle otherParticle = particles[i2];
+				if(i == i2) continue;
+
+				Vector2 diff = otherParticle.pos - particle.pos;
+				float r = diff.magnitude;
+
+				if (r < H){
+					Vector2 antiDir = -diff.normalized;
+					if (antiDir.x == 0 && antiDir.y == 0){
+					 	antiDir.x = -Random.value;
+						antiDir.y = -Random.value;
+					}
+
+					// compute pressure force contribution
+					fpress += antiDir * MASS * (particle.pressure + otherParticle.pressure) / (2.0f * otherParticle.density) * SPIKY_GRAD * Mathf.Pow(H - r, 2.0f);
+					// compute viscosity force contribution
+					fvisc += VISC * MASS * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
+				}
+			}
+
+			Vector2 fgrav = G * particle.density;
+			particle.force = fpress + fvisc + fgrav;
+			particles[i] = particle;
+		}
+	}
+
+    void Integrate() {
 		for (int i = 0; i < particles.Length; i++){
 			ElementParticle particle = particles[i];
 
 			// forward Euler integration
+			// if (i == 0){
+			// 	Debug.Log(particle.force / particle.density * 0.2f);
+			// }
 			particle.velocity += DT * particle.force / particle.density;
 			particle.pos += DT * particle.velocity;
 
@@ -199,53 +270,6 @@ public class ElementSimulator : MonoBehaviour {
 			particles[i] = particle;
 		}
 	}
-	
-	void ComputeDensityAndPressure() {
-		for (int i = 0; i < particles.Length; i++){
-			ElementParticle particle = particles[i];
-
-			particle.density = 0.0f;
-			for (int i2 = 0; i2 < particles.Length; i2++){ // optimization: replace with grid and iterating over particles in neighboring grid-tiles
-				ElementParticle otherParticle = particles[i2];
-				Vector2 dir = otherParticle.pos - particle.pos;
-				float r2 = GetNormSquared(dir);
-
-				if (r2 < HSQ){
-					// this computation is symmetric
-					particle.density += MASS * POLY6 * Mathf.Pow(HSQ - r2, 3.0f);
-				}
-			}
-
-			particle.pressure = GAS_CONST * (particle.density - REST_DENS);
-			particles[i] = particle;
-		}
-	}
-	
-	void ComputeForces() {
-		for (int i = 0; i < particles.Length; i++){
-			ElementParticle particle = particles[i];
-			Vector2 fpress = new Vector2();
-			Vector2 fvisc = new Vector2();
-			for (int i2 = 0; i2 < particles.Length; i2++){ // optimization: replace with grid and iterating over particles in neighboring grid-tiles
-				ElementParticle otherParticle = particles[i];
-				if(otherParticle.pos == particle.pos) continue;
-
-				Vector2 dir = otherParticle.pos - particle.pos;
-				float r = GetNorm(dir);
-
-				if (r < H){
-					// compute pressure force contribution
-					fpress += -dir.normalized * MASS * (particle.pressure + otherParticle.pressure) / (2.0f * otherParticle.density) * SPIKY_GRAD * Mathf.Pow(H - r, 2.0f);
-					// compute viscosity force contribution
-					fvisc += VISC * MASS * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
-				}
-			}
-
-			Vector2 fgrav = G * particle.density;
-			particle.force = fpress + fvisc + fgrav;
-			particles[i] = particle;
-		}
-	}
 
 	void GetInput(){
 		if (Input.GetKey(KeyCode.Space)){
@@ -263,19 +287,21 @@ public class ElementSimulator : MonoBehaviour {
 						}
 					}
 				}
+                ElementParticle[] newParticleArray = new ElementParticle[particles.Length + newParticles.Count];
+                int index = 0;
+                for (int i = 0; i < particles.Length; i++){
+                    newParticleArray[index] = particles[i];
+                }
+                for (int i = 0; i < newParticles.Count; i++){
+                    newParticleArray[index] = newParticles[i];
+                }
+                particles = newParticleArray;
 			}
 		}
 		if (Input.GetKeyUp(KeyCode.R)){
 			particles = null;
 			InitSPH();
 		}
-	}
-
-	float GetNorm(Vector2 v) {
-		return Mathf.Sqrt(GetNormSquared(v));
-	}
-	float GetNormSquared(Vector2 v){
-		return Mathf.Pow(v.x, 2) + Mathf.Pow(v.y, 2);
 	}
 }
 // using System.Collections;
