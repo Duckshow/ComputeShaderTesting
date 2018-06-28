@@ -17,7 +17,7 @@ public class Interact : MonoBehaviour {
 	* way that $j$ contributes to $i$).
 	*@c*/
 
-	static void update_density(ref State.particle_t pi, ref State.particle_t pj, float h2, float C){
+	static void update_density(State.particle_t pi, State.particle_t pj, float h2, float C){
 		float r2 = (pi.x - pj.x).sqrMagnitude;
 		float z  = h2-r2;
 		if (z > 0) {
@@ -27,7 +27,7 @@ public class Interact : MonoBehaviour {
 		}
 	}
 
-	public static void compute_density(ref State.sim_state_t s, ref Params.sim_param_t param){
+	public static void compute_density(State.sim_state_t s, Params.sim_param_t param){
 		int n = s.n;
 		//particle_t* p = s->part;
 		//particle_t** hash = s->hash;
@@ -52,7 +52,7 @@ public class Interact : MonoBehaviour {
 				pi.rho += 4 * s.mass / Mathf.PI / h3;
 
 				// Retrieve neighbors
-				BinHash.particle_neighborhood(ref neighborBucket, ref pi, h);
+				BinHash.particle_neighborhood(ref neighborBucket, pi, h);
 
 				// Loop through neighbors
 				for (int j = 0; j < 27; j++) {
@@ -61,16 +61,12 @@ public class Interact : MonoBehaviour {
 					if (pj != null) { // Go through linked list
 						do {
 							if (pi != pj) {
-								update_density(ref pi, ref pj, h2, C);
+								update_density(pi, pj, h2, C);
 							}
 							pj = pj.next;
 						} while (pj != null);
 					}
-
-					s.hash[neighborBucket[j]] = pj;
 				}
-
-				s.part[i] = pi;
 			}
 		}
 		else{
@@ -78,9 +74,8 @@ public class Interact : MonoBehaviour {
 				State.particle_t pi = s.part[i];
 				pi.rho += 4 * s.mass / Mathf.PI / h3;
 				for (int j = i+1; j < n; ++j) {
-					update_density(ref pi, ref s.part[j], h2, C);
+					update_density(pi, s.part[j], h2, C);
 				}
-				s.part[i] = pi;
 			}
 		}
 
@@ -102,7 +97,7 @@ public class Interact : MonoBehaviour {
 	* but it does a very expensive brute force search for neighbors.
 	*@c*/
 
-	static void update_forces(ref State.particle_t pi, ref State.particle_t pj, float h2, float rho0, float C0, float Cp, float Cv){
+	static void update_forces(State.particle_t pi, State.particle_t pj, float h2, float rho0, float C0, float Cp, float Cv){
 		Vector3 dx = new Vector3();
 		dx = pi.x - pj.x;
 		float r2 = dx.sqrMagnitude;
@@ -126,7 +121,7 @@ public class Interact : MonoBehaviour {
 		}
 	}
 
-	public static void compute_accel(ref State.sim_state_t state, ref Params.sim_param_t param){
+	public static void compute_accel(State.sim_state_t state, Params.sim_param_t param){
 		// Unpack basic parameters
 		float h    = param.h;
 		float rho0 = param.rho0;
@@ -141,11 +136,12 @@ public class Interact : MonoBehaviour {
 		//particle_t** hash = state->hash;
 		int n = state.n;
 
+
 		// Rehash the particles
-		BinHash.hash_particles(ref state, h);
+		BinHash.hash_particles(state, h);
 
 		// Compute density and color
-		compute_density(ref state, ref param);
+		compute_density(state, param);
 
 		// Start with gravity and surface forces
 		for (int i = 0; i < n; ++i){
@@ -162,11 +158,11 @@ public class Interact : MonoBehaviour {
 			// Create small stack array of size what we want
 			uint[] neighborBucket = new uint[27];
 
-			for (int i = 0; i < n; ++i) {
+			for (int i = 0; i < n; i++) {
 				State.particle_t pi = state.part[i];
 
 				// Retrieve neighbors
-				BinHash.particle_neighborhood(ref neighborBucket, ref pi, h);
+				BinHash.particle_neighborhood(ref neighborBucket, pi, h);
 
 				// Loop through neighbors
 				for (int j = 0; j < 27; j++) {
@@ -174,23 +170,19 @@ public class Interact : MonoBehaviour {
 					if (pj != null) { // Go through linked list
 						do {
 							if (pi != pj) { // Don't want to do crazy 
-								update_forces(ref pi, ref pj, h2, rho0, C0, Cp, Cv);
+								update_forces(pi, pj, h2, rho0, C0, Cp, Cv);
 							}
 							pj = pj.next;
 						} while (pj != null);
 					}
-
-					state.part[j] = pj;
 				}
-
-				state.part[i] = pi;
 			}
 			
 		}
 		else{
 			for (int i = 0; i < n; ++i) {
 				for (int j = i+1; j < n; ++j) {
-					update_forces(ref state.part[i], ref state.part[j], h2, rho0, C0, Cp, Cv);
+					update_forces(state.part[i], state.part[j], h2, rho0, C0, Cp, Cv);
 				}
 			}
 		}

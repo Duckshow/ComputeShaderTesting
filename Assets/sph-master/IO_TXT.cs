@@ -8,8 +8,8 @@ public class IO_TXT : MonoBehaviour {
 	}
 
 	public static void write_frame_data(int n, State.sim_state_t s){
-		for (int i = 0; i < n; i++){
-			Debug.LogFormat("{0}\n", s.part[i].x);
-		}
+		// for (int i = 0; i < n; i++){
+		// 	Debug.LogFormat("{0}\n", s.part[i].x);
+		// }
 	}
 }

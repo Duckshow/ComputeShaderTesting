@@ -4,6 +4,10 @@ using System;
 using UnityEngine;
 
 public class SPH : MonoBehaviour {
+
+	[SerializeField]
+	private ParticleSystem particleSys;
+
 	/*@q
 	* ====================================================================
 	*/
@@ -45,16 +49,19 @@ public class SPH : MonoBehaviour {
 	* with cell sizes of $h/1.3$.  This is close enough to allow the
 	* particles to overlap somewhat, but not too much.
 	*@c*/
-	State.sim_state_t place_particles(ref Params.sim_param_t param, Func<float, float, float, int> indicatef){
+	State.sim_state_t place_particles(Params.sim_param_t param, Func<float, float, float, int> indicatef){
 		float h  = param.h;
 		float hh = h/1.3f;
 
 		// Count mesh points that fall in indicated region.
 		int count = 0;
-		for (float x = 0; x < 1; x += hh)
-			for (float y = 0; y < 1; y += hh)
-				for (float z = 0; z < 1; z += hh)
+		for (float x = 0; x < 1; x += hh) { 
+			for (float y = 0; y < 1; y += hh) { 
+				for (float z = 0; z < 1; z += hh) { 
 					count += indicatef(x,y,z);
+				}
+			}
+		}
 
 		// Populate the particle data structure
 		State.sim_state_t s = new State.sim_state_t(count);
@@ -87,10 +94,10 @@ public class SPH : MonoBehaviour {
 	* desired reference density.  We do this with [[normalize_mass]].
 	* 
 	* @c*/
-	void normalize_mass(ref State.sim_state_t s, ref Params.sim_param_t param){
+	void normalize_mass(State.sim_state_t s, Params.sim_param_t param){
 		s.mass = 1;
-		BinHash.hash_particles(ref s, param.h);
-		Interact.compute_density(ref s, ref param);
+		BinHash.hash_particles(s, param.h);
+		Interact.compute_density(s, param);
 		float rho0 = param.rho0;
 		float rho2s = 0;
 		float rhos  = 0;
@@ -101,10 +108,10 @@ public class SPH : MonoBehaviour {
 		s.mass *= ( rho0*rhos / rho2s );
 	}
 
-	State.sim_state_t init_particles(ref Params.sim_param_t param){
-		State.sim_state_t s = place_particles(ref param, box_indicator);
+	State.sim_state_t init_particles(Params.sim_param_t param){
+		State.sim_state_t s = place_particles(param, box_indicator);
 		//sim_state_t* s = place_particles(param, points_indicator);
-		normalize_mass(ref s, ref param);
+		normalize_mass(s, param);
 		return s;
 	}
 
@@ -118,7 +125,7 @@ public class SPH : MonoBehaviour {
 	* has gone berserk.
 	*@c*/
 
-	static void check_state(ref State.sim_state_t s){
+	static void check_state(State.sim_state_t s){
 		for (int i = 0; i < s.n; i++) {
 			float xi = s.part[i].x.GetAxis(0);
 			float yi = s.part[i].x.GetAxis(1);
@@ -133,23 +140,27 @@ public class SPH : MonoBehaviour {
 		Params.sim_param_t param = new Params.sim_param_t();
 		Params.default_params(ref param);
 
-		State.sim_state_t state = init_particles(ref param);
+		State.sim_state_t state = init_particles(param);
 		int nframes = param.nframes;
 		int npframe = param.npframe;
 		float dt    = param.dt;
 		int n       = state.n;
 
+		particleSys.startSize = param.h;
+
 		//write_header(fp, n);
 		IO_TXT.write_header(n, nframes, param.h);
 		IO_TXT.write_frame_data(n, state);
-		Interact.compute_accel(ref state, ref param);
-		Leapfrog.leapfrog_start(ref state, dt);
-		check_state(ref state);
+		Interact.compute_accel(state, param);
+		Leapfrog.leapfrog_start(state, dt);
+		check_state(state);
 		for (int frame = 1; frame < nframes; frame++) {
 			for (int i = 0; i < npframe; i++) {
-				Interact.compute_accel(ref state, ref param);
-				Leapfrog.leapfrog_step(ref state, dt);
-				check_state(ref state);
+				Interact.compute_accel(state, param);
+				Leapfrog.leapfrog_step(state, dt);
+				check_state(state);
+				UpdateParticleSystemParticleCount(state);
+				ApplyToParticleSystem(state);
 			}
 
 			Debug.LogFormat("Frame: {0} of {1} - {2}\n", frame, nframes, 100*(float)frame/nframes);
@@ -157,5 +168,30 @@ public class SPH : MonoBehaviour {
 		}
 
 		Debug.LogFormat("Ran in {0} seconds\n", Time.time-Time.timeSinceLevelLoad);
+	}
+
+	void UpdateParticleSystemParticleCount(State.sim_state_t state) {
+		int maxAmount = state.part.Length;
+		ParticleSystem.MainModule main = particleSys.main;
+		main.maxParticles = maxAmount;
+
+		if (particleSys.particleCount < maxAmount){
+			Debug.Log(maxAmount - particleSys.particleCount);
+			particleSys.Play();
+			particleSys.Emit(maxAmount - particleSys.particleCount);
+
+		}
+	}
+
+	void ApplyToParticleSystem(State.sim_state_t state) {
+		ParticleSystem.Particle[] actualParticles = null;
+		int currentParticleCount = particleSys.GetParticles(actualParticles);
+		Debug.Log(currentParticleCount);
+
+		for (int i = 0; i < state.part.Length; i++){
+			actualParticles[i].position = state.part[i].x;
+			actualParticles[i].velocity = state.part[i].v;
+		}
+		particleSys.SetParticles(actualParticles, actualParticles.Length);
 	}
 }

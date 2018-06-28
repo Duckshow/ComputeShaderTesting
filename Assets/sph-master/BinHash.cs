@@ -57,7 +57,7 @@ public class BinHash : MonoBehaviour {
   public const uint MAX_NBR_BINS = 27;
   public const uint HASH_MASK = (HASH_DIM-1);
 
-  static uint particle_bucket(ref State.particle_t p, float h){
+  static uint particle_bucket(State.particle_t p, float h){
       uint ix = (uint)(p.x.x / h);
       uint iy = (uint)(p.x.y / h);
       uint iz = (uint)(p.x.z / h);
@@ -65,9 +65,9 @@ public class BinHash : MonoBehaviour {
   }
 
   // Note: We check ALL buckets, even those that are weird...
-  public static void particle_neighborhood(ref uint[] buckets, ref State.particle_t p, float h){
-    //printf("called!");
-    uint ix = (uint)(p.x.x / h);
+  public static void particle_neighborhood(ref uint[] buckets, State.particle_t p, float h){
+	//printf("called!");
+	uint ix = (uint)(p.x.x / h);
     uint iy = (uint)(p.x.y / h);
     uint iz = (uint)(p.x.z / h);
 
@@ -86,7 +86,7 @@ public class BinHash : MonoBehaviour {
     }
   }
 
-  public static void hash_particles(ref State.sim_state_t s, float h){
+  public static void hash_particles(State.sim_state_t s, float h){
     // Unpack particles and hash
     //particle_t* p = s.part;
     //particle_t** hash = s.hash;
@@ -100,16 +100,16 @@ public class BinHash : MonoBehaviour {
     for (int i = 0; i < n; i++) {
       // Some error output on the y-axis
       // Had some errors when working for CS5643 going into into slightly negative values
-      if (s.part[i].x[1] < 0) {
+     // if (s.part[i].x[1] < 0) {
         //if (p[i].x[1] < 1e-5) {
           //printf("ERROR HASH WILL FAIL: Particle: %e %e %e\n", \
           // s.part[i].x[0], s.part[i].x[1], s.part[i].x[2]);
         //}
         //p[i].x[1] = 0;
-      }
+      //}
 
       // Hash using Z Morton
-      uint b = particle_bucket(ref s.part[i], h);
+      uint b = particle_bucket(s.part[i], h);
 
       // Add particle to the start of the list of bin b
       s.part[i].next = s.hash[b];

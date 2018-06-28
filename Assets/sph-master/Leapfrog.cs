@@ -48,7 +48,7 @@ public class Leapfrog : MonoBehaviour {
     * \end{enumerate}
     *@c*/
 
-    public static void leapfrog_step(ref State.sim_state_t s, float dt){
+    public static void leapfrog_step(State.sim_state_t s, float dt){
         int n = s.n;
         for (int i = 0; i < n; ++i) {
             State.particle_t p = s.part[i];
@@ -56,9 +56,8 @@ public class Leapfrog : MonoBehaviour {
             p.v = p.vh;
             Utilities.Math_SAXPY(ref p.v, dt/2, p.a);
             Utilities.Math_SAXPY(ref p.x, dt,   p.vh);
-            s.part[i] = p;
         }
-        reflect_bc(ref s);
+        reflect_bc(s);
     }
 
     /*@T
@@ -70,7 +69,7 @@ public class Leapfrog : MonoBehaviour {
     * \end{align*}
     *@c*/
 
-    public static void leapfrog_start(ref State.sim_state_t s, float dt){
+    public static void leapfrog_start(State.sim_state_t s, float dt){
         int n = s.n;
         for (int i = 0; i < n; ++i) {
             State.particle_t p = s.part[i];
@@ -78,9 +77,8 @@ public class Leapfrog : MonoBehaviour {
             Utilities.Math_SAXPY(ref p.vh, dt/2, p.a);
             Utilities.Math_SAXPY(ref p.v,  dt,   p.a);
             Utilities.Math_SAXPY(ref p.x,  dt,   p.vh);
-            s.part[i] = p;
         }
-        reflect_bc(ref s);
+        reflect_bc(s);
     }
 
     /*@T
@@ -122,7 +120,7 @@ public class Leapfrog : MonoBehaviour {
     * For each particle, we need to check for reflections on each
     * of the four walls of the computational domain.
     *@c*/
-    static void reflect_bc(ref State.sim_state_t s){
+    static void reflect_bc(State.sim_state_t s){
         // Boundaries of the computational domain
         const float XMIN = 0.0f;
         const float XMAX = 1.0f;
@@ -141,8 +139,6 @@ public class Leapfrog : MonoBehaviour {
             if (part.x.GetAxis(1) > YMAX) damp_reflect(1, YMAX, ref part.x, ref part.v, ref part.vh);
             if (part.x.GetAxis(2) < ZMIN) damp_reflect(2, ZMIN, ref part.x, ref part.v, ref part.vh);
             if (part.x.GetAxis(2) > ZMAX) damp_reflect(2, ZMAX, ref part.x, ref part.v, ref part.vh);
-            
-            s.part[i] = part;
         }
     }
 }

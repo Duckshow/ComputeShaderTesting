@@ -17,10 +17,10 @@ public class State {
 	*@c*/
 	public class particle_t {
 		public float rho;         /* Particle density   */
-		public Vector3 x;      /* Particle positions */
-		public Vector3 v;      /* Particle velocities (full step) */
-		public Vector3 vh;       /* Particle velocities (half step) */
-		public Vector3 a;      /* Particle accelerations */
+		public Vector3 x = new Vector3();      /* Particle positions */
+		public Vector3 v = new Vector3();      /* Particle velocities (full step) */
+		public Vector3 vh = new Vector3();       /* Particle velocities (half step) */
+		public Vector3 a = new Vector3();      /* Particle accelerations */
 		public particle_t next;  /* List link for spatial hashing */
 	}
 
@@ -33,7 +33,13 @@ public class State {
 		public sim_state_t(int n){
 			this.n = n;
 			part = new particle_t[n];
+			for (int i = 0; i < part.Length; i++){
+				part[i] = new particle_t();
+			}
 			hash = new particle_t[BinHash.HASH_SIZE];
+			for (int i = 0; i < hash.Length; i++){
+				hash[i] = new particle_t();
+			}
 		}
 	}
 }
