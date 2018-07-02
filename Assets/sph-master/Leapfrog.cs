@@ -49,13 +49,12 @@ public class Leapfrog : MonoBehaviour {
     *@c*/
 
     public static void leapfrog_step(State.sim_state_t s, float dt){
-        int n = s.n;
-        for (int i = 0; i < n; ++i) {
+        for (int i = 0; i < s.n; ++i) {
             State.particle_t p = s.part[i];
             Utilities.Math_SAXPY(ref p.vh, dt,  p.a);
             p.v = p.vh;
-            Utilities.Math_SAXPY(ref p.v, dt/2, p.a);
-            Utilities.Math_SAXPY(ref p.x, dt,   p.vh);
+            Utilities.Math_SAXPY(ref p.v, dt/2.0f, p.a);
+            Utilities.Math_SAXPY(ref p.x, dt,   p.v);
         }
         reflect_bc(s);
     }
@@ -71,15 +70,16 @@ public class Leapfrog : MonoBehaviour {
 
     public static void leapfrog_start(State.sim_state_t s, float dt){
         int n = s.n;
-        for (int i = 0; i < n; ++i) {
+        for (int i = 0; i < s.n; i++) {
             State.particle_t p = s.part[i];
-            p.vh = p.v;
+			p.vh = p.v;
+			
             Utilities.Math_SAXPY(ref p.vh, dt/2, p.a);
             Utilities.Math_SAXPY(ref p.v,  dt,   p.a);
             Utilities.Math_SAXPY(ref p.x,  dt,   p.vh);
-        }
+		}
         reflect_bc(s);
-    }
+	}
 
     /*@T
     *
@@ -97,8 +97,12 @@ public class Leapfrog : MonoBehaviour {
         // Coefficient of resitiution
         const float DAMP = 0.75f;
 
-        // Ignore degenerate cases
-        if (v.GetAxis(which) == 0)
+		Vector3 xCached = x;
+		Vector3 vCached = v;
+		Vector3 vhCached = vh;
+
+		// Ignore degenerate cases
+		if (Mathf.Approximately(v.GetAxis(which), 0.0f))
             return;
 
         // Scale back the distance traveled based on time from collision
@@ -113,7 +117,9 @@ public class Leapfrog : MonoBehaviour {
         // Damp the velocities
         v *= DAMP;
         vh *= DAMP;
-    }
+		//Debug.Log("X = " + (2 * barrier - x.GetAxis(which)) + " (" + xCached.GetAxis(which) + ")");
+		//Debug.LogFormat("x: {0}/{1}, \nv: {2}/{3}, \nvh: {4}/{5}\n", xCached * 1000, x * 1000, vCached * 1000, v * 1000, vhCached * 1000, vh * 1000);
+	}
 
     /*@T
     *
@@ -129,16 +135,19 @@ public class Leapfrog : MonoBehaviour {
         const float ZMIN = 0.0f;
         const float ZMAX = 1.0f;
 
-        int n = s.n;
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < s.n; i++) {
             State.particle_t part = s.part[i];
-            
-            if (part.x.GetAxis(0) < XMIN) damp_reflect(0, XMIN, ref part.x, ref part.v, ref part.vh);
-            if (part.x.GetAxis(0) > XMAX) damp_reflect(0, XMAX, ref part.x, ref part.v, ref part.vh);
-            if (part.x.GetAxis(1) < YMIN) damp_reflect(1, YMIN, ref part.x, ref part.v, ref part.vh);
-            if (part.x.GetAxis(1) > YMAX) damp_reflect(1, YMAX, ref part.x, ref part.v, ref part.vh);
-            if (part.x.GetAxis(2) < ZMIN) damp_reflect(2, ZMIN, ref part.x, ref part.v, ref part.vh);
-            if (part.x.GetAxis(2) > ZMAX) damp_reflect(2, ZMAX, ref part.x, ref part.v, ref part.vh);
-        }
+
+			if (part.x.x <= XMIN) damp_reflect(0, XMIN, ref part.x, ref part.v, ref part.vh);
+            if (part.x.x >= XMAX) damp_reflect(0, XMAX, ref part.x, ref part.v, ref part.vh);
+            if (part.x.y <= YMIN) damp_reflect(1, YMIN, ref part.x, ref part.v, ref part.vh);
+            if (part.x.y >= YMAX) damp_reflect(1, YMAX, ref part.x, ref part.v, ref part.vh);
+            if (part.x.z <= ZMIN) damp_reflect(2, ZMIN, ref part.x, ref part.v, ref part.vh);
+            if (part.x.z >= ZMAX) damp_reflect(2, ZMAX, ref part.x, ref part.v, ref part.vh);
+
+			part.x.x = Mathf.Clamp(part.x.x, XMIN, XMAX);
+			part.x.y = Mathf.Clamp(part.x.y, YMIN, YMAX);
+			part.x.z = Mathf.Clamp(part.x.z, ZMIN, ZMAX);
+		}
     }
 }

@@ -43,42 +43,30 @@ public class Interact : MonoBehaviour {
 			s.part[i].rho = 0;
 
 		// Accumulate density info
-		if (true){
-			// Create small stack array of size what we want
-			uint[] neighborBucket = new uint[27];
+		// Create small stack array of size what we want
+		uint[] neighborBucket = new uint[27];
 
-			for (int i = 0; i < n; ++i) {
-				State.particle_t pi = s.part[i];
-				pi.rho += 4 * s.mass / Mathf.PI / h3;
+		for (int i = 0; i < n; ++i) {
+			State.particle_t pi = s.part[i];
+			pi.rho += 4 * s.mass / Mathf.PI / h3;
 
-				// Retrieve neighbors
-				BinHash.particle_neighborhood(ref neighborBucket, pi, h);
+			// Retrieve neighbors
+			BinHash.particle_neighborhood(ref neighborBucket, pi, h);
 
-				// Loop through neighbors
-				for (int j = 0; j < 27; j++) {
-					State.particle_t pj = s.hash[neighborBucket[j]];
-					//printf("Point: %p\n", pj);
-					if (pj != null) { // Go through linked list
-						do {
-							if (pi != pj) {
-								update_density(pi, pj, h2, C);
-							}
-							pj = pj.next;
-						} while (pj != null);
-					}
+			// Loop through neighbors
+			for (int j = 0; j < 27; j++) {
+				State.particle_t pj = s.hash[neighborBucket[j]];
+				//printf("Point: %p\n", pj);
+				if (pj != null) { // Go through linked list
+					do {
+						if (pi != pj) {
+							update_density(pi, pj, h2, C);
+						}
+						pj = pj.next;
+					} while (pj != null);
 				}
 			}
 		}
-		else{
-			for (int i = 0; i < n; ++i) {
-				State.particle_t pi = s.part[i];
-				pi.rho += 4 * s.mass / Mathf.PI / h3;
-				for (int j = i+1; j < n; ++j) {
-					update_density(pi, s.part[j], h2, C);
-				}
-			}
-		}
-
 	}
 
 
@@ -154,35 +142,25 @@ public class Interact : MonoBehaviour {
 		float Cv = -mu;
 
 		// Accumulate forces
-		if (true){
-			// Create small stack array of size what we want
-			uint[] neighborBucket = new uint[27];
+		// Create small stack array of size what we want
+		uint[] neighborBucket = new uint[27];
 
-			for (int i = 0; i < n; i++) {
-				State.particle_t pi = state.part[i];
+		for (int i = 0; i < n; i++) {
+			State.particle_t pi = state.part[i];
 
-				// Retrieve neighbors
-				BinHash.particle_neighborhood(ref neighborBucket, pi, h);
+			// Retrieve neighbors
+			BinHash.particle_neighborhood(ref neighborBucket, pi, h);
 
-				// Loop through neighbors
-				for (int j = 0; j < 27; j++) {
-					State.particle_t pj = state.hash[neighborBucket[j]];
-					if (pj != null) { // Go through linked list
-						do {
-							if (pi != pj) { // Don't want to do crazy 
-								update_forces(pi, pj, h2, rho0, C0, Cp, Cv);
-							}
-							pj = pj.next;
-						} while (pj != null);
-					}
-				}
-			}
-			
-		}
-		else{
-			for (int i = 0; i < n; ++i) {
-				for (int j = i+1; j < n; ++j) {
-					update_forces(state.part[i], state.part[j], h2, rho0, C0, Cp, Cv);
+			// Loop through neighbors
+			for (int j = 0; j < 27; j++) {
+				State.particle_t pj = state.hash[neighborBucket[j]];
+				if (pj != null) { // Go through linked list
+					do {
+						if (pi != pj) { // Don't want to do crazy 
+							update_forces(pi, pj, h2, rho0, C0, Cp, Cv);
+						}
+						pj = pj.next;
+					} while (pj != null);
 				}
 			}
 		}

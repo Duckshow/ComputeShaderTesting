@@ -8,6 +8,8 @@ public class SPH : MonoBehaviour {
 	[SerializeField]
 	private ParticleSystem particleSys;
 
+	private ParticleSystem.Particle[] cachedParticles;
+
 	/*@q
 	* ====================================================================
 	*/
@@ -63,13 +65,15 @@ public class SPH : MonoBehaviour {
 			}
 		}
 
+		count = 100;
+
 		// Populate the particle data structure
 		State.sim_state_t s = new State.sim_state_t(count);
 		int p = 0;
 		for (float x = 0; x < 1; x += hh) {
 			for (float y = 0; y < 1; y += hh) {
 				for (float z = 0; z < 1; z += hh) {
-					if (indicatef(x,y,z) == 1) {
+					if (indicatef(x,y,z) == 1 && p < count) {
 						s.part[p].x.Set(x, y, z);
 						s.part[p].v.Set(0, 0, 0);
 						p++;
@@ -125,49 +129,82 @@ public class SPH : MonoBehaviour {
 	* has gone berserk.
 	*@c*/
 
-	static void check_state(State.sim_state_t s){
+	static bool check_state(State.sim_state_t s){
 		for (int i = 0; i < s.n; i++) {
 			float xi = s.part[i].x.GetAxis(0);
 			float yi = s.part[i].x.GetAxis(1);
 			float zi = s.part[i].x.GetAxis(2);
-			if(xi >= 0 || xi <= 1) Debug.LogError("xi >= 0 || xi <= 1");
-			if(yi >= 0 || yi <= 1) Debug.LogError("yi >= 0 || yi <= 1");
-			if(zi >= 0 || zi <= 1) Debug.LogError("zi >= 0 || zi <= 1");
+			if (xi < 0.0f || xi > 1.0f) { 
+				Debug.LogError(xi + ": xi < 0 || xi > 1");
+				return false;
+			}
+			if(yi < 0.0f || yi > 1.0f) {
+				Debug.LogError(yi + ": yi < 0 || yi > 1");
+				return false;
+			}
+			if(zi < 0.0f || zi > 1.0f) {
+				Debug.LogError(zi + ": zi < 0 || zi > 1");
+				return false;
+			}
 		}
+		return true;
 	}
 
+	private bool isOkay = false;
+	private State.sim_state_t state;
+	private Params.sim_param_t param;
+	private int framesRun = 0;
+
 	void Start(){
-		Params.sim_param_t param = new Params.sim_param_t();
+		param = new Params.sim_param_t();
 		Params.default_params(ref param);
 
-		State.sim_state_t state = init_particles(param);
-		int nframes = param.nframes;
-		int npframe = param.npframe;
-		float dt    = param.dt;
-		int n       = state.n;
+		state = init_particles(param);
 
 		particleSys.startSize = param.h;
 
 		//write_header(fp, n);
-		IO_TXT.write_header(n, nframes, param.h);
-		IO_TXT.write_frame_data(n, state);
+		IO_TXT.write_header(state.n, param.nframes, param.h);
+		IO_TXT.write_frame_data(state.n, state);
 		Interact.compute_accel(state, param);
-		Leapfrog.leapfrog_start(state, dt);
-		check_state(state);
-		for (int frame = 1; frame < nframes; frame++) {
-			for (int i = 0; i < npframe; i++) {
-				Interact.compute_accel(state, param);
-				Leapfrog.leapfrog_step(state, dt);
-				check_state(state);
-				UpdateParticleSystemParticleCount(state);
-				ApplyToParticleSystem(state);
-			}
+		Leapfrog.leapfrog_start(state, param.dt);
+		isOkay = check_state(state);
+// 		if (isOkay){
+// 			for (int frame = 1; frame < param.nframes; frame++) {
+// 				for (int i = 0; i < param.npframe; i++) {
+// 					Interact.compute_accel(state, param);
+// 					Leapfrog.leapfrog_step(state, param.dt);
+// 					isOkay = check_state(state);
+// 					if(!isOkay) break;
 
-			Debug.LogFormat("Frame: {0} of {1} - {2}\n", frame, nframes, 100*(float)frame/nframes);
-			IO_TXT.write_frame_data(n, state);
+// 					UpdateParticleSystemParticleCount(state);
+// 					ApplyToParticleSystem(state);
+// 				}
+
+// //				Debug.LogFormat("Frame: {0} of {1} - {2}%\n", frame, param.nframes, 100*(float)frame/param.nframes);
+// 				IO_TXT.write_frame_data(state.n, state);
+// 				if(!isOkay) break;
+// 			}
+// 		}
+
+		//particleSys.Pause();
+		Debug.LogFormat("Ran in {0} seconds\n", Time.time-Time.timeSinceLevelLoad);
+	}
+
+	void FixedUpdate() {
+		for (int i = 0; i < param.npframe; i++){
+			Interact.compute_accel(state, param);
+			Leapfrog.leapfrog_step(state, param.dt);
+			isOkay = check_state(state);
+			if (!isOkay) break;
+
+			UpdateParticleSystemParticleCount(state);
+			ApplyToParticleSystem(state);
 		}
 
-		Debug.LogFormat("Ran in {0} seconds\n", Time.time-Time.timeSinceLevelLoad);
+//		Debug.LogFormat("Frame: {0} of {1} - {2}%\n", framesRun, param.nframes, 100 * (float)framesRun / param.nframes);
+		IO_TXT.write_frame_data(state.n, state);
+		framesRun++;
 	}
 
 	void UpdateParticleSystemParticleCount(State.sim_state_t state) {
@@ -175,23 +212,24 @@ public class SPH : MonoBehaviour {
 		ParticleSystem.MainModule main = particleSys.main;
 		main.maxParticles = maxAmount;
 
+		if (cachedParticles == null || cachedParticles.Length != maxAmount){
+			cachedParticles = new ParticleSystem.Particle[maxAmount];
+		}
+
 		if (particleSys.particleCount < maxAmount){
-			Debug.Log(maxAmount - particleSys.particleCount);
 			particleSys.Play();
 			particleSys.Emit(maxAmount - particleSys.particleCount);
-
 		}
 	}
 
 	void ApplyToParticleSystem(State.sim_state_t state) {
-		ParticleSystem.Particle[] actualParticles = null;
-		int currentParticleCount = particleSys.GetParticles(actualParticles);
-		Debug.Log(currentParticleCount);
+		int currentParticleCount = particleSys.GetParticles(cachedParticles);
 
+		//Debug.Log(currentParticleCount);
 		for (int i = 0; i < state.part.Length; i++){
-			actualParticles[i].position = state.part[i].x;
-			actualParticles[i].velocity = state.part[i].v;
+			cachedParticles[i].position = state.part[i].x;
+			cachedParticles[i].velocity = state.part[i].v;
 		}
-		particleSys.SetParticles(actualParticles, actualParticles.Length);
+		particleSys.SetParticles(cachedParticles, cachedParticles.Length);
 	}
 }

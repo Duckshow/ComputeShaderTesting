@@ -52,7 +52,7 @@ public class BinHash : MonoBehaviour {
   * 
   *@c*/
 
-  public const uint HASH_DIM = 0x10;
+  public const uint HASH_DIM = 0x10; // 16
   public const uint HASH_SIZE = (HASH_DIM*HASH_DIM*HASH_DIM);
   public const uint MAX_NBR_BINS = 27;
   public const uint HASH_MASK = (HASH_DIM-1);

@@ -36,8 +36,8 @@ public class Params : MonoBehaviour {
 	*@c*/
 	public static void default_params(ref sim_param_t param){
 		param.fname   = "run_test.out";
-		param.nframes = 400;
-		param.npframe = 100;
+		param.nframes = 100;
+		param.npframe = 10;
 		param.dt      = 1e-4f;
 		param.h       = 5e-2f;
 		param.rho0    = 1000f;
