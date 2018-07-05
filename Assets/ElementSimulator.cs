@@ -50,7 +50,7 @@ public class ElementSimulator : MonoBehaviour {
 	private const int BLOCK_PARTICLES = 1000;
 
 	// ============== WARNING: shared with ElementEmulator.compute! must be equal!
-	private const int PIXELS_PER_TILE_EDGE = 32;
+	private const int PIXELS_PER_TILE_EDGE = 16;
 	private const int GRID_WIDTH_TILES = 1;
 	private const int GRID_HEIGHT_TILES = 1;
 	private const int GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
@@ -109,6 +109,7 @@ public class ElementSimulator : MonoBehaviour {
 		particles = startParticles.ToArray();
 	}
 
+	private ParticleSystem.Particle[] emittedParticles;
 	void FixedUpdate () {
 		CacheParticlesInBuckets();
 		ComputeDensityAndPressure();
@@ -123,7 +124,9 @@ public class ElementSimulator : MonoBehaviour {
         main.startSize = H * 2;
         particleSystem.Emit(particles.Length);
 
-        ParticleSystem.Particle[] emittedParticles = new ParticleSystem.Particle[particleSystem.particleCount];
+		if (emittedParticles == null || emittedParticles.Length != particleSystem.particleCount){
+			emittedParticles = new ParticleSystem.Particle[particleSystem.particleCount];
+		}
         particleSystem.GetParticles(emittedParticles);
         for (int i = 0; i < particleSystem.particleCount; i++){
             emittedParticles[i].position = particles[i].pos;
@@ -149,7 +152,10 @@ public class ElementSimulator : MonoBehaviour {
 			particle.density = 0.0f;
 			int[] neighborIndices = GetNeighborParticleIndices(particle.pos);
 			for (int i2 = 0; i2 < neighborIndices.Length; i2++){ // optimization: replace with grid and iterating over particles in neighboring grid-tiles
-				ElementParticle otherParticle = particles[neighborIndices[i2]];
+				int neighborIndex = neighborIndices[i2];
+				if(neighborIndex == -1) break;
+
+				ElementParticle otherParticle = particles[neighborIndex];
 				Vector2 dir = otherParticle.pos - particle.pos;
 				float r2 = dir.sqrMagnitude;
 
@@ -172,20 +178,16 @@ public class ElementSimulator : MonoBehaviour {
 			int[] neighborIndices = GetNeighborParticleIndices(particle.pos);
 			for (int i2 = 0; i2 < neighborIndices.Length; i2++){ // optimization: replace with grid and iterating over particles in neighboring grid-tiles
 				int neighborIndex = neighborIndices[i2];
-				ElementParticle otherParticle = particles[neighborIndex];
-				if(i == neighborIndex) continue;
+				if(neighborIndex == -1) break;
+				if(neighborIndex == i) continue;
 
+				ElementParticle otherParticle = particles[neighborIndex];
 				Vector2 diff = otherParticle.pos - particle.pos;
 				float r = diff.magnitude;
 
 				if (r < H){
-					Vector2 antiDir = -diff.normalized;
-					// if (antiDir.x == 0 && antiDir.y == 0){
-					//  	antiDir.x = -Random.value;
-					// 	antiDir.y = -Random.value;
-					// }
 					// compute pressure force contribution
-					fpress += antiDir * MASS * (particle.pressure + otherParticle.pressure) / (2.0f * otherParticle.density) * SPIKY_GRAD * Mathf.Pow(H - r, 2.0f);
+					fpress += -diff.normalized * MASS * (particle.pressure + otherParticle.pressure) / (2.0f * otherParticle.density) * SPIKY_GRAD * Mathf.Pow(H - r, 2.0f);
 					// compute viscosity force contribution
 					fvisc += VISC * MASS * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
 				}
@@ -235,7 +237,7 @@ public class ElementSimulator : MonoBehaviour {
 	private const int PARTICLE_BUCKET_COUNT_X = GRID_WIDTH_PIXELS / PARTICLE_BUCKET_WIDTH;
 	private static Bucket[] particleBuckets = new Bucket[HYPOTHETICAL_MAX_AMOUNT_PARTICLES / PARTICLE_BUCKET_SIZE];
 	class Bucket {
-		private const int MAX_AMOUNT_OF_CONTENT = 32;
+		public const int MAX_AMOUNT_OF_CONTENT = 32;
 		private int[] content = new int[MAX_AMOUNT_OF_CONTENT];
 		private int latestIndexAddedTo = -1;
 
@@ -278,29 +280,25 @@ public class ElementSimulator : MonoBehaviour {
 	}
 
 	private const int BUCKET_CLUSTER_SIZE = 9;
+	private int[] bucketGridPosXs = new int[BUCKET_CLUSTER_SIZE];
+	private int[] bucketGridPosYs = new int[BUCKET_CLUSTER_SIZE];
+	private int[] bucketIndices = new int[BUCKET_CLUSTER_SIZE];
+	private int[] bucketClusterContent = new int[BUCKET_CLUSTER_SIZE * Bucket.MAX_AMOUNT_OF_CONTENT];
 	int[] GetNeighborParticleIndices(Vector2 pos) {
 		int centerBucketIndex;
 		int centerBucketX;
 		int centerBucketY;
 		GetParticleBucketIndex(pos, out centerBucketIndex, out centerBucketX, out centerBucketY);
 
-		int[] bucketGridPosXs = new int[BUCKET_CLUSTER_SIZE];
-		int[] bucketGridPosYs = new int[BUCKET_CLUSTER_SIZE]; 
-		int[] bucketIndices = new int[BUCKET_CLUSTER_SIZE];
-		int[][] bucketCluster = new int[BUCKET_CLUSTER_SIZE][];
-		bool[] shouldIncludes = new bool[BUCKET_CLUSTER_SIZE];
-
-		int amountOfBucketsToMoveVertically = PARTICLE_BUCKET_COUNT_X; // minus to account for the center bucket
-
-		bucketIndices[0] = centerBucketIndex + amountOfBucketsToMoveVertically - 1;
-		bucketIndices[1] = centerBucketIndex + amountOfBucketsToMoveVertically;
-		bucketIndices[2] = centerBucketIndex + amountOfBucketsToMoveVertically + 1;
+		bucketIndices[0] = centerBucketIndex + PARTICLE_BUCKET_COUNT_X - 1;
+		bucketIndices[1] = centerBucketIndex + PARTICLE_BUCKET_COUNT_X;
+		bucketIndices[2] = centerBucketIndex + PARTICLE_BUCKET_COUNT_X + 1;
 		bucketIndices[3] = centerBucketIndex - 1;
 		bucketIndices[4] = centerBucketIndex;
 		bucketIndices[5] = centerBucketIndex + 1;
-		bucketIndices[6] = centerBucketIndex - amountOfBucketsToMoveVertically - 1;
-		bucketIndices[7] = centerBucketIndex - amountOfBucketsToMoveVertically;
-		bucketIndices[8] = centerBucketIndex - amountOfBucketsToMoveVertically + 1;
+		bucketIndices[6] = centerBucketIndex - PARTICLE_BUCKET_COUNT_X - 1;
+		bucketIndices[7] = centerBucketIndex - PARTICLE_BUCKET_COUNT_X;
+		bucketIndices[8] = centerBucketIndex - PARTICLE_BUCKET_COUNT_X + 1;
 
 		bucketGridPosXs[0] = centerBucketX - 1;
 		bucketGridPosYs[0] = centerBucketY + 1;
@@ -329,47 +327,29 @@ public class ElementSimulator : MonoBehaviour {
 		bucketGridPosXs[8] = centerBucketX + 1;
 		bucketGridPosYs[8] = centerBucketY - 1;
 
-		int totalContentCount = 0;
-		for (int i = 0; i < BUCKET_CLUSTER_SIZE; i++){
-			int bucketIndex = bucketIndices[i];
-			int bucketGridPosX = bucketGridPosXs[i];
-			int bucketGridPosY = bucketGridPosYs[i];
-			bool isWithinGrid = bucketGridPosX >= 0 && bucketGridPosY >= 0 && bucketGridPosX < PARTICLE_BUCKET_COUNT_X && bucketGridPosY < PARTICLE_BUCKET_COUNT_X;
-			shouldIncludes[i] = isWithinGrid;
-
-			if(isWithinGrid) {
-				bucketCluster[i] = particleBuckets[bucketIndex].GetContent();
-				totalContentCount += particleBuckets[bucketIndex].GetContentAmount();
-			}
-			else { 
-				bucketCluster[i] = null;
-			}
-		}
-
 		int addedCount = 0;
-		int[] bucketClusterContent = new int[totalContentCount];
-		for (int i = 0; i < BUCKET_CLUSTER_SIZE; i++){
-			if(!shouldIncludes[i]) continue;
+		for (int clusterIndex = 0; clusterIndex < BUCKET_CLUSTER_SIZE; clusterIndex++){
+			int bucketIndex = bucketIndices[clusterIndex];
+			int bucketGridPosX = bucketGridPosXs[clusterIndex];
+			int bucketGridPosY = bucketGridPosYs[clusterIndex];
+			bool isWithinGrid = bucketGridPosX >= 0 && bucketGridPosY >= 0 && bucketGridPosX < PARTICLE_BUCKET_COUNT_X && bucketGridPosY < PARTICLE_BUCKET_COUNT_X;
 
-			int[] bucketContent = bucketCluster[i];
-			for (int i2 = 0; i2 < bucketContent.Length; i2++){
-				int content = bucketContent[i2];
+			if(!isWithinGrid) continue;
+
+			int[] bucketContent = particleBuckets[bucketIndex].GetContent();
+			for (int contentIndex = 0; contentIndex < bucketContent.Length; contentIndex++){
+				int content = bucketContent[contentIndex];
 				if(content == -1) break;
 				bucketClusterContent[addedCount] = content;
 				addedCount++;
 			}
 		}
+		if (addedCount < bucketClusterContent.Length){
+			for (int i = addedCount; i < bucketClusterContent.Length; i++){
+				bucketClusterContent[i] = -1;
+			}
+		}
 
-		// if (pos.x == 31 && pos.y == 31){
-		// 	for (int i = 0; i < bucketIndices.Length; i++){
-		// 		Debug.Log(bucketIndices[i] + ": " + shouldIncludes[i]);
-		// 		if (shouldIncludes[i]){
-		// 			particleBuckets[bucketIndices[i]].debug = true;
-		// 		}
-		// 	}
-		// }
-
-//		Debug.Log(pos + ": " + totalContentCount);
 		return bucketClusterContent;
 	}
 
