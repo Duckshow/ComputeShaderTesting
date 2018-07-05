@@ -50,7 +50,7 @@ public class ElementSimulator : MonoBehaviour {
 	private const int BLOCK_PARTICLES = 1000;
 
 	// ============== WARNING: shared with ElementEmulator.compute! must be equal!
-	private const int PIXELS_PER_TILE_EDGE = 16;
+	private const int PIXELS_PER_TILE_EDGE = 32;
 	private const int GRID_WIDTH_TILES = 1;
 	private const int GRID_HEIGHT_TILES = 1;
 	private const int GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
@@ -68,6 +68,10 @@ public class ElementSimulator : MonoBehaviour {
 	private Material material;
     [SerializeField]
     private ParticleSystem particleSystem;
+	[SerializeField]
+	private float repelStrength = 1.0f;
+
+	private float repelFactor;
 
 
 	void Start () {
@@ -80,6 +84,8 @@ public class ElementSimulator : MonoBehaviour {
 	}
 
 	void InitSPH(){
+		repelFactor = 1 / repelStrength;
+
 		for (int i = 0; i < particleBuckets.Length; i++){
 			particleBuckets[i] = new Bucket();
 		}
@@ -157,7 +163,7 @@ public class ElementSimulator : MonoBehaviour {
 
 				ElementParticle otherParticle = particles[neighborIndex];
 				Vector2 dir = otherParticle.pos - particle.pos;
-				float r2 = dir.sqrMagnitude;
+				float r2 = dir.sqrMagnitude * repelFactor;
 
 				if (r2 < HSQ){
 					// this computation is symmetric
@@ -183,7 +189,7 @@ public class ElementSimulator : MonoBehaviour {
 
 				ElementParticle otherParticle = particles[neighborIndex];
 				Vector2 diff = otherParticle.pos - particle.pos;
-				float r = diff.magnitude;
+				float r = diff.magnitude * repelFactor;
 
 				if (r < H){
 					// compute pressure force contribution
