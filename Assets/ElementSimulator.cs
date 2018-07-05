@@ -10,15 +10,20 @@ public class ElementSimulator : MonoBehaviour {
 		public Vector2 force;
 		public float density;
 		public float pressure;
-
+		public float mass;
+		public float visc;
+		public int elementIndex;
 		public int bucketIndex;
 
-		public ElementParticle(float x, float y) {
+		public ElementParticle(int elementIndex, float x, float y, float mass, float visc) {
 			pos = new Vector2(x, y);
 			velocity = new Vector2();
 			force = new Vector2();
-			density = 0;
-			pressure = 0;
+			density = 0.0f;
+			pressure = 0.0f;
+			this.mass = mass;
+			this.visc = visc;
+			this.elementIndex = elementIndex;
 			bucketIndex = -1;
 		}
 
@@ -28,7 +33,7 @@ public class ElementSimulator : MonoBehaviour {
 	};
 
 	// solver parameters
-	private static readonly Vector2 G = new Vector2(0, 300 * -9.8f); // external (gravitational) forces
+	private static readonly Vector2 G = new Vector2(0, 600 * -9.8f); // external (gravitational) forces
 	private const float REST_DENS = 1000.0f; // rest density
 	private const float GAS_CONST = 2000.0f; // const for equation of state
 	private const float H = 0.5f; // interaction radius
@@ -36,29 +41,30 @@ public class ElementSimulator : MonoBehaviour {
 	private const float MASS = 2.0f; // assume all particles have the same mass
 	private const float VISC = 250.0f; // viscosity constant
 	private const float DT = 0.0008f; // integration timestep
+	private const float DENSITY_OFFSET = 0.925f; // make SPIKY_GRAD apply force earlier (particles don't have to be as close)
+	private const float VISC_OFFSET = 0.925f; // make VISC_LAP apply force earlier (particles don't have to be as close)
 
 	// smoothing kernels defined in Müller and their gradients
 	private static readonly float POLY6 = 315.0f / (65.0f * Mathf.PI * Mathf.Pow(H, 9.0f));
-	private static readonly float SPIKY_GRAD = -45.0f / (Mathf.PI * Mathf.Pow(H, 6.0f));
-	private static readonly float VISC_LAP = 45.0f / (Mathf.PI * Mathf.Pow(H, 6.0f));
+	private static readonly float SPIKY_GRAD = -45.0f / (Mathf.PI * Mathf.Pow(H * DENSITY_OFFSET, 6.0f));
+	private static readonly float VISC_LAP = 45.0f / (Mathf.PI * Mathf.Pow(H * VISC_OFFSET, 6.0f));
 
 	// simulation parameters
 	private const float EPS = H; // boundary epsilon
 	private const float BOUND_DAMPING = -0.5f;
-	private const int DAM_PARTICLES = 1000;
-	private const int MAX_PARTICLES = 500;
-	private const int BLOCK_PARTICLES = 1000;
+	private const int DAM_PARTICLES_L = 250;
+	private const int DAM_PARTICLES_R = 250;
+	private const int MAX_PARTICLES = 2000;
 
 	// ============== WARNING: shared with ElementEmulator.compute! must be equal!
 	private const int PIXELS_PER_TILE_EDGE = 32;
-	private const int GRID_WIDTH_TILES = 1;
+	private const int GRID_WIDTH_TILES = 2;
 	private const int GRID_HEIGHT_TILES = 1;
 	private const int GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
 	private const int GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
 	//===============
 
-	private const int THREAD_COUNT_MAX = 1024;
-
+	private const float MIN_TIME_BETWEEN_PARTICLE_SPAWN = 0.1f;
 
 	private ElementParticle[] particles;
 
@@ -70,8 +76,20 @@ public class ElementSimulator : MonoBehaviour {
     private ParticleSystem particleSystem;
 	[SerializeField]
 	private float repelStrength = 1.0f;
+	[SerializeField]
+	private float mass0 = 1.0f;
+	[SerializeField]
+	private float mass1 = 1.0f;
+	[SerializeField]
+	private float visc0 = 1.0f;
+	[SerializeField]
+	private float visc1 = 1.0f;
 
 	private float repelFactor;
+	private List<ElementParticle> startParticles;
+	private ParticleSystem.Particle[] emittedParticles;
+	private float nextTimeSpawnIsAllowed = 0.0f;
+
 
 
 	void Start () {
@@ -85,37 +103,85 @@ public class ElementSimulator : MonoBehaviour {
 
 	void InitSPH(){
 		repelFactor = 1 / repelStrength;
+		mass0 *= MASS;
+		mass1 *= MASS;
+		visc0 *= VISC;
+		visc1 *= VISC;
 
 		for (int i = 0; i < particleBuckets.Length; i++){
 			particleBuckets[i] = new Bucket();
 		}
 
-		List<ElementParticle> startParticles = new List<ElementParticle>();
+		startParticles = new List<ElementParticle>();
 
-		for (float y = EPS; y < GRID_HEIGHT_PIXELS - EPS * 2.0f; y += H) {
-			for (float x = EPS; x < GRID_WIDTH_PIXELS * 0.5f - EPS * 2.0f; x += H) {
-				if (startParticles.Count < Mathf.Min(DAM_PARTICLES, MAX_PARTICLES)){
-					// if(Random.value < (x / GRID_WIDTH_PIXELS) * 4) continue;
+		int addedCount = 0;
+		for (float x = EPS; x < GRID_WIDTH_PIXELS * 0.5f - EPS * 2.0f; x += H) {
+			for (float y = EPS; y < GRID_HEIGHT_PIXELS - EPS * 2.0f; y += H) {
+				if (addedCount < Mathf.Min(DAM_PARTICLES_L, MAX_PARTICLES)){
 					float jitter = Random.value / H;
-					startParticles.Add(new ElementParticle(x + jitter, y));
+					startParticles.Add(new ElementParticle(0, x + jitter, y, mass0, visc0));
+					addedCount++;
 				}
 			}
 		}
-		// for (int i = 0; i < GRID_HEIGHT_PIXELS; i++){
-		// 	if(startParticles.Count >= MAX_PARTICLES) break;
-		// 	for (int i2 = 0; i2 < GRID_WIDTH_PIXELS; i2++){
-		// 		if(startParticles.Count >= MAX_PARTICLES) break;
 
-		// 		float jitter = Random.value / H;
-		// 		float newX = Mathf.Clamp(i2 + jitter, 0, GRID_WIDTH_PIXELS);
-		// 		startParticles.Add(new ElementParticle(newX, i));
-		// 	}
-		// }
+		addedCount = 0;
+		for (float x = GRID_WIDTH_PIXELS - EPS * 4.0f; x > EPS; x -= H) {
+			for (float y = GRID_HEIGHT_PIXELS - EPS * 4.0f; y > EPS; y -= H) {
+				if (addedCount < Mathf.Min(DAM_PARTICLES_R, MAX_PARTICLES)){
+					float jitter = Random.value / H;
+					startParticles.Add(new ElementParticle(1, x + jitter, y, mass1, visc1));
+					addedCount++;
+				}
+			}
+		}
 
 		particles = startParticles.ToArray();
 	}
 
-	private ParticleSystem.Particle[] emittedParticles;
+	void Update(){
+		if (particles.Length == MAX_PARTICLES) {
+			return;
+		}
+		if (Time.time < nextTimeSpawnIsAllowed){
+			return;
+		}
+		nextTimeSpawnIsAllowed = Time.time + MIN_TIME_BETWEEN_PARTICLE_SPAWN;
+
+		float mousePosX;
+		float mousePosY;
+		GetMousePositionOnGrid(out mousePosX, out mousePosY);
+
+		if (mousePosX < 0 || mousePosY < 0 || mousePosX >= transform.position.x + GRID_WIDTH_PIXELS || mousePosY >= transform.position.y + GRID_HEIGHT_PIXELS){
+			return;
+		}
+
+		if (Input.GetKey(KeyCode.Mouse0)){
+			startParticles = new List<ElementParticle>(particles);
+			ElementParticle particle = new ElementParticle(0, mousePosX, mousePosY, mass0, visc0);
+			particle.velocity.x = 1000.0f;
+			startParticles.Add(particle);
+			particles = startParticles.ToArray();
+		}
+
+		if (Input.GetKey(KeyCode.Mouse1)){
+			startParticles = new List<ElementParticle>(particles);
+			ElementParticle particle = new ElementParticle(1, mousePosX, mousePosY, mass1, visc1);
+			particle.velocity.x = -1000.0f;
+			startParticles.Add(particle);
+			particles = startParticles.ToArray();
+		}
+	}
+
+	void GetMousePositionOnGrid(out float x, out float y){
+		Vector2 gridPosStart = Camera.main.WorldToScreenPoint(transform.position);
+		Vector2 gridPosEnd = Camera.main.WorldToScreenPoint(transform.position + new Vector3(GRID_WIDTH_PIXELS, GRID_HEIGHT_PIXELS));
+		float mousePosX01 = (Input.mousePosition.x - gridPosStart.x) / gridPosEnd.x;
+		float mousePosY01 = (Input.mousePosition.y - gridPosStart.y) / gridPosEnd.y;
+		x = GRID_WIDTH_PIXELS * mousePosX01;
+		y = GRID_HEIGHT_PIXELS * mousePosY01;
+	}
+
 	void FixedUpdate () {
 		CacheParticlesInBuckets();
 		ComputeDensityAndPressure();
@@ -136,8 +202,8 @@ public class ElementSimulator : MonoBehaviour {
         particleSystem.GetParticles(emittedParticles);
         for (int i = 0; i < particleSystem.particleCount; i++){
             emittedParticles[i].position = particles[i].pos;
-//			emittedParticles[i].startColor = new Color((Mathf.Clamp((float)particles[i].bucketIndex / 255.0f, 0, 1)), 0, 0, 1);
-			emittedParticles[i].startColor = new Color((Mathf.Clamp((float)particleBuckets[particles[i].bucketIndex].GetContentAmount() * 2 / 255.0f, 0, 1)), 0, 0, 1);
+			emittedParticles[i].startColor = new Color(particles[i].elementIndex, 0, 1 - particles[i].elementIndex, 1);
+			//emittedParticles[i].startColor = new Color((Mathf.Clamp((float)particleBuckets[particles[i].bucketIndex].GetContentAmount() * 2 / 255.0f, 0, 1)), 0, 0, 1);
 		}
         particleSystem.SetParticles(emittedParticles, particleSystem.particleCount);
 
@@ -167,7 +233,7 @@ public class ElementSimulator : MonoBehaviour {
 
 				if (r2 < HSQ){
 					// this computation is symmetric
-					particle.density += MASS * POLY6 * Mathf.Pow(HSQ - r2, 3.0f);
+					particle.density += otherParticle.mass * POLY6 * Mathf.Pow(HSQ - r2, 3.0f);
 				}
 			}
 
@@ -193,9 +259,9 @@ public class ElementSimulator : MonoBehaviour {
 
 				if (r < H){
 					// compute pressure force contribution
-					fpress += -diff.normalized * MASS * (particle.pressure + otherParticle.pressure) / (2.0f * otherParticle.density) * SPIKY_GRAD * Mathf.Pow(H - r, 2.0f);
+					fpress += -diff.normalized * otherParticle.mass * (particle.pressure + otherParticle.pressure) / (2.0f * otherParticle.density) * SPIKY_GRAD * Mathf.Pow(H - r, 2.0f);
 					// compute viscosity force contribution
-					fvisc += VISC * MASS * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
+					fvisc += otherParticle.visc * otherParticle.mass * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
 				}
 			}
 
