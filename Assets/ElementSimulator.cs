@@ -12,10 +12,11 @@ public class ElementSimulator : MonoBehaviour {
 		public float pressure;
 		public float mass;
 		public float visc;
-		public float temperature;
-		public float temperatureOld;
 		public int elementIndex;
 		public int bucketIndex;
+		public bool debug;
+		private float temperature;
+		private float repelFactor;
 
 		public ElementParticle(int elementIndex, float x, float y, float mass, float visc, float temperature) {
 			pos = new Vector2(x, y);
@@ -25,10 +26,26 @@ public class ElementSimulator : MonoBehaviour {
 			pressure = 0.0f;
 			this.mass = mass;
 			this.visc = visc;
-			this.temperature = temperature;
-			this.temperatureOld = temperature;
 			this.elementIndex = elementIndex;
 			bucketIndex = -1;
+			debug = false;
+
+			this.temperature = 0.0f;
+			repelFactor = 0.0f;
+			SetTemperature(temperature);
+		}
+
+		public void SetTemperature(float temperature){
+			this.temperature = temperature;
+			repelFactor = 1.0f / (1.0f + temperature / MAX_TEMPERATURE * REPEL_STRENGTH_MAX);
+		}
+
+		public float GetTemperature(){
+			return temperature;
+		}
+
+		public float GetRepelFactor(){
+			return repelFactor;
 		}
 
 		// public static int GetStride() {
@@ -42,9 +59,10 @@ public class ElementSimulator : MonoBehaviour {
 	private const float GAS_CONST = 2000.0f; // const for equation of state
 	private const float H = 0.5f; // interaction radius
 	private const float HSQ = H * H; // radius^2 for optimization
+	private const float HSQ_TEMPERATURE = HSQ * 2.0f; // interaction radius
 	private const float MASS = 2.0f; // assume all particles have the same mass
 	private const float VISC = 250.0f; // viscosity constant
-	private const float DT = 0.0008f; // integration timestep
+	private const float DT = 0.0004f; // integration timestep
 	private const float DENSITY_OFFSET = 0.925f; // make SPIKY_GRAD apply force earlier (particles don't have to be as close)
 	private const float VISC_OFFSET = 0.925f; // make VISC_LAP apply force earlier (particles don't have to be as close)
 
@@ -56,8 +74,8 @@ public class ElementSimulator : MonoBehaviour {
 	// simulation parameters
 	private const float EPS = H; // boundary epsilon
 	private const float BOUND_DAMPING = -0.5f;
-	private const int DAM_PARTICLES_L = 250;
-	private const int DAM_PARTICLES_R = 250;
+	private const int DAM_PARTICLES_L = 400;
+	private const int DAM_PARTICLES_R = 400;
 	private const int MAX_PARTICLES = 2000;
 
 	// ============== WARNING: shared with ElementEmulator.compute! must be equal!
@@ -72,6 +90,8 @@ public class ElementSimulator : MonoBehaviour {
 	private const float MAX_TEMPERATURE = 1000.0f;
 
 	private const float THERMAL_DIFFUSIVITY = 500.0f;
+	private const float REPEL_STRENGTH_MAX = 4.0f;
+	private const float CLUSTERING_RESISTANCE = 4.0f;
 
 	private ElementParticle[] particles;
 
@@ -82,8 +102,6 @@ public class ElementSimulator : MonoBehaviour {
     [SerializeField]
     private ParticleSystem particleSystem;
 	[SerializeField]
-	private float repelStrength = 1.0f;
-	[SerializeField]
 	private float mass0 = 1.0f;
 	[SerializeField]
 	private float mass1 = 1.0f;
@@ -92,11 +110,9 @@ public class ElementSimulator : MonoBehaviour {
 	[SerializeField]
 	private float visc1 = 1.0f;
 
-	private float repelFactor;
 	private List<ElementParticle> startParticles;
 	private ParticleSystem.Particle[] emittedParticles;
 	private float nextTimeSpawnIsAllowed = 0.0f;
-
 
 
 	void Start () {
@@ -109,7 +125,6 @@ public class ElementSimulator : MonoBehaviour {
 	}
 
 	void InitSPH(){
-		repelFactor = 1 / repelStrength;
 		mass0 *= MASS;
 		mass1 *= MASS;
 		visc0 *= VISC;
@@ -125,8 +140,8 @@ public class ElementSimulator : MonoBehaviour {
 		for (float x = EPS; x < GRID_WIDTH_PIXELS * 0.5f - EPS * 2.0f; x += H) {
 			for (float y = EPS; y < GRID_HEIGHT_PIXELS - EPS * 2.0f; y += H) {
 				if (addedCount < Mathf.Min(DAM_PARTICLES_L, MAX_PARTICLES)){
-					float jitter = Random.value / H;
-					startParticles.Add(new ElementParticle(0, x + jitter, y, mass0, visc0, MAX_TEMPERATURE));
+					float jitter = Random.value / H * 0.01f;
+					startParticles.Add(new ElementParticle(0, x + jitter, y, mass0, visc0, 0.0f));
 					addedCount++;
 				}
 			}
@@ -136,7 +151,7 @@ public class ElementSimulator : MonoBehaviour {
 		for (float x = GRID_WIDTH_PIXELS - EPS * 4.0f; x > EPS; x -= H) {
 			for (float y = GRID_HEIGHT_PIXELS - EPS * 4.0f; y > EPS; y -= H) {
 				if (addedCount < Mathf.Min(DAM_PARTICLES_R, MAX_PARTICLES)){
-					float jitter = Random.value / H;
+					float jitter = Random.value / H * 0.01f;
 					startParticles.Add(new ElementParticle(1, x + jitter, y, mass1, visc1, 0.0f));
 					addedCount++;
 				}
@@ -167,6 +182,7 @@ public class ElementSimulator : MonoBehaviour {
 			startParticles = new List<ElementParticle>(particles);
 			ElementParticle particle = new ElementParticle(0, mousePosX, mousePosY, mass0, visc0, MAX_TEMPERATURE);
 			particle.velocity.x = 1000.0f;
+			particle.debug = true;
 			startParticles.Add(particle);
 			particles = startParticles.ToArray();
 		}
@@ -175,6 +191,7 @@ public class ElementSimulator : MonoBehaviour {
 			startParticles = new List<ElementParticle>(particles);
 			ElementParticle particle = new ElementParticle(1, mousePosX, mousePosY, mass1, visc1, 0.0f);
 			particle.velocity.x = -1000.0f;
+			particle.debug = true;
 			startParticles.Add(particle);
 			particles = startParticles.ToArray();
 		}
@@ -190,9 +207,20 @@ public class ElementSimulator : MonoBehaviour {
 	}
 
 	void FixedUpdate () {
+		if (Input.mouseScrollDelta.y != 0){
+			for (int i = 0; i < particles.Length; i++){
+				Vector3 screenPos = Camera.main.WorldToScreenPoint(particles[i].pos);
+				if ((Input.mousePosition - screenPos).magnitude > 100.0f) continue;
+
+				float newTemperature = particles[i].GetTemperature() + Input.mouseScrollDelta.y * 100.0f;
+				newTemperature = Mathf.Clamp(newTemperature, 0, MAX_TEMPERATURE);
+				particles[i].SetTemperature(newTemperature);
+			}
+		}
+
+
 		CacheParticlesInBuckets();
 		ComputeDensityAndPressure();
-		ComputeTemperatureAndPressure();
 		ComputeForces();
 		Integrate();
 		// for (int i = 0; i < particles.Length; i++){
@@ -215,7 +243,7 @@ public class ElementSimulator : MonoBehaviour {
 				emittedParticles[i].startColor = Color.cyan;
 			}
 			else{
-				emittedParticles[i].startColor = Color.Lerp(Color.blue, Color.red, particles[i].temperature / MAX_TEMPERATURE);
+				emittedParticles[i].startColor = Color.Lerp(Color.blue, Color.red, particles[i].GetTemperature() / MAX_TEMPERATURE);
 				//emittedParticles[i].startColor = new Color(particles[i].elementIndex, 0, 1 - particles[i].elementIndex, 1);
 				//emittedParticles[i].startColor = new Color((Mathf.Clamp((float)particleBuckets[particles[i].bucketIndex].GetContentAmount() * 2 / 255.0f, 0, 1)), 0, 0, 1);
 			}
@@ -244,53 +272,29 @@ public class ElementSimulator : MonoBehaviour {
 
 				ElementParticle otherParticle = particles[neighborIndex];
 				Vector2 dir = otherParticle.pos - particle.pos;
-				float r2 = dir.sqrMagnitude * repelFactor;
+				float r2 = dir.sqrMagnitude * particle.GetRepelFactor();
 
+				float temperature = particle.GetTemperature();
+				float temperatureOther = otherParticle.GetTemperature();
+				if (r2 < HSQ_TEMPERATURE && temperature > temperatureOther){
+					float diffTemperature = temperature - temperatureOther;
+					float exchange = 0.5f * THERMAL_DIFFUSIVITY * DT * diffTemperature;
+
+					float newTemperature1 = temperature - exchange;
+					float newTemperatureClamped1 = Mathf.Clamp(newTemperature1, 0, MAX_TEMPERATURE);
+
+					float newTemperature2 = temperatureOther + exchange;
+					float newTemperatureClamped2 = Mathf.Clamp(newTemperature2, 0, MAX_TEMPERATURE);
+					
+					float unusedTemperature = Mathf.Max(Mathf.Abs(newTemperatureClamped1 - newTemperature1), Mathf.Abs(newTemperature2 - newTemperatureClamped2));
+
+					particle.SetTemperature(temperature - exchange - unusedTemperature);
+					otherParticle.SetTemperature(temperatureOther + exchange - unusedTemperature);
+					particles[neighborIndex] = otherParticle;
+				}
 				if (r2 < HSQ){
 					// this computation is symmetric
 					particle.density += otherParticle.mass * POLY6 * Mathf.Pow(HSQ - r2, 3.0f);
-					particle.temperatureOld = particle.temperature;
-				}
-			}
-
-			//particle.pressure = GAS_CONST * (particle.density - REST_DENS);
-			particles[i] = particle;
-		}
-	}
-
-	void ComputeTemperatureAndPressure() { 
-		for (int i = 0; i < particles.Length; i++){
-			ElementParticle particle = particles[i];
-
-			int[] neighborIndices = GetNeighborParticleIndices(particle.pos);
-			for (int i2 = 0; i2 < neighborIndices.Length; i2++){ // optimization: replace with grid and iterating over particles in neighboring grid-tiles
-				int neighborIndex = neighborIndices[i2];
-				if(neighborIndex == -1) break;
-
-				ElementParticle otherParticle = particles[neighborIndex];
-				Vector2 dir = otherParticle.pos - particle.pos;
-				float r2 = dir.sqrMagnitude * repelFactor;
-
-				if (r2 < HSQ){
-					float diffTemperature = particle.temperatureOld - otherParticle.temperatureOld;
-					float exchange = 0.5f * THERMAL_DIFFUSIVITY * DT * diffTemperature;
-
-					float min = Mathf.Min(particle.temperatureOld, otherParticle.temperatureOld);
-					float max = Mathf.Max(MAX_TEMPERATURE - particle.temperatureOld, MAX_TEMPERATURE - otherParticle.temperatureOld);
-					float min2 = Mathf.Min(min, max);
-					float max2 = Mathf.Max(min, max);
-
-					exchange = Mathf.Clamp(exchange, min2, max2);
-
-					//particle.density -= exchange;
-					particle.temperature -= exchange;
-					//otherParticle.density += exchange;
-					otherParticle.temperature += exchange;
-					if (i == 0){
-						Debug.Log(THERMAL_DIFFUSIVITY + " * " + DT + " * " + diffTemperature + " (" + particle.temperatureOld + ", " + otherParticle.temperatureOld + ")");
-					}
-
-					particles[neighborIndex] = otherParticle;
 				}
 			}
 
@@ -298,7 +302,7 @@ public class ElementSimulator : MonoBehaviour {
 			particles[i] = particle;
 		}
 	}
-	
+
 	void ComputeForces() {
 		for (int i = 0; i < particles.Length; i++){
 			ElementParticle particle = particles[i];
@@ -312,11 +316,11 @@ public class ElementSimulator : MonoBehaviour {
 
 				ElementParticle otherParticle = particles[neighborIndex];
 				Vector2 diff = otherParticle.pos - particle.pos;
-				float r = diff.magnitude * repelFactor;
+				float r = diff.magnitude * particle.GetRepelFactor();
 
 				if (r < H){
 					// compute pressure force contribution
-					fpress += -diff.normalized * otherParticle.mass * (particle.pressure + otherParticle.pressure) / (2.0f * otherParticle.density) * SPIKY_GRAD * Mathf.Pow(H - r, 2.0f);
+					fpress += -diff.normalized * otherParticle.mass * (particle.pressure + otherParticle.pressure) / (2.0f * otherParticle.density) * SPIKY_GRAD * Mathf.Pow(H - r, 2.0f) * CLUSTERING_RESISTANCE;
 					// compute viscosity force contribution
 					fvisc += otherParticle.visc * otherParticle.mass * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
 				}
@@ -366,7 +370,7 @@ public class ElementSimulator : MonoBehaviour {
 	private const int PARTICLE_BUCKET_COUNT_X = GRID_WIDTH_PIXELS / PARTICLE_BUCKET_WIDTH;
 	private static Bucket[] particleBuckets = new Bucket[HYPOTHETICAL_MAX_AMOUNT_PARTICLES / PARTICLE_BUCKET_SIZE];
 	class Bucket {
-		public const int MAX_AMOUNT_OF_CONTENT = 32;
+		public const int MAX_AMOUNT_OF_CONTENT = 64;
 		private int[] content = new int[MAX_AMOUNT_OF_CONTENT];
 		private int latestIndexAddedTo = -1;
 
