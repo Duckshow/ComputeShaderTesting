@@ -1,143 +1,446 @@
-﻿#pragma kernel Integrate
-#pragma kernel ComputeDensityAndPressure
-#pragma kernel ComputeForces
-#pragma kernel RenderToTexture
+﻿#pragma kernel ComputeDensityAndPressure
+//#pragma kernel ComputeForces
+//#pragma kernel Integrate
 
-// ============== WARNING: shared with ElementSimulator.cs! must be equal!
-static const int PIXELS_PER_TILE_EDGE = 32;
-static const int GRID_WIDTH_TILES = 3;
-static const int GRID_HEIGHT_TILES = 1;
-static const int GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
-static const int GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
-//===============
 
 // solver parameters
-static const float PI = 3.14159265;
-static const float2 G = float2(0.0, 12000.0 * -9.8); // external (gravitational) forces
+static const float2 G = float2(0, 0);//300 * -9.8f); // external (gravitational) forces
 static const float REST_DENS = 1000.0; // rest density
 static const float GAS_CONST = 2000.0; // const for equation of state
-static const float H = 16.0; // kernel radius
+static const float H = 0.5; // interaction radius
 static const float HSQ = H * H; // radius^2 for optimization
-static const float MASS = 65.0; // assume all particles have the same mass
+static const float HSQ_TEMPERATURE = HSQ * 2.0; // interaction radius
+static const float H_SURFACE_TENSION = H * 3.0; // interaction radius
+static const float MASS = 2.0; // assume all particles have the same mass
 static const float VISC = 250.0; // viscosity constant
 static const float DT = 0.0008; // integration timestep
-
+static const float DENSITY_OFFSET = 0.925; // make SPIKY_GRAD apply force earlier (particles don't have to be as close)
+static const float VISC_OFFSET = 0.925; // make VISC_LAP apply force earlier (particles don't have to be as close)
+static const float PI = 3.14159265359;
 // smoothing kernels defined in Müller and their gradients
 static const float POLY6 = 315.0 / (65.0 * PI * pow(H, 9.0));
-static const float SPIKY_GRAD = -45.0 / (PI * pow(H, 6.0));
-static const float VISC_LAP = 45.0 / (PI * pow(H, 6.0));
+static const float SPIKY_GRAD = -45.0 / (PI * pow(H * DENSITY_OFFSET, 6.0));
+static const float VISC_LAP = 45.0 / (PI * pow(H * VISC_OFFSET, 6.0));
 
 // simulation parameters
 static const float EPS = H; // boundary epsilon
 static const float BOUND_DAMPING = -0.5;
+static const int DAM_PARTICLES_L = 100;
+static const int DAM_PARTICLES_R = 100;
+static const int MAX_PARTICLES = 2000;
 
-struct ElementParticle{ // WARNING: variables must correspond to ElementSimulator.cs's PixelContent!
+static const float MIN_TIME_BETWEEN_PARTICLE_SPAWN = 0.1;
+static const float MAX_TEMPERATURE = 1000.0;
+
+static const float THERMAL_DIFFUSIVITY = 0.5;
+static const float REPEL_STRENGTH_MIN = 1.0;
+static const float REPEL_STRENGTH_MAX = 8.0;
+static const float REPEL_FACTOR_MIN = 1.0 / REPEL_STRENGTH_MAX;
+static const float REPEL_FACTOR_MAX = 1.0 / REPEL_STRENGTH_MIN;
+static const float CLUSTERING_RESISTANCE = 1.0;
+static const float SURFACE_TENSION_WATER = 5.0;
+
+static const float STATE_CORRECTION_OFFSET = 0.000001; // offset to ensure two states can't be == 1 at the same time
+static const float REPEL_STRENGTH_SMOOTHING_START_SOLID = 0.9;
+
+// ============== WARNING: shared with ElementSimulator.cs! must be equal!
+static const int PIXELS_PER_TILE_EDGE = 32;
+static const int GRID_WIDTH_TILES = 2;
+static const int GRID_HEIGHT_TILES = 1;
+static const int GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
+static const int GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
+static const int HYPOTHETICAL_MAX_AMOUNT_PARTICLES = (GRID_WIDTH_PIXELS * GRID_HEIGHT_PIXELS) / H;
+static const int BUCKET_WIDTH = 1;
+//===============
+
+static const int BUCKET_CLUSTER_SIZE = 9;
+static const int BUCKET_SIZE = 1;
+static const int BUCKET_COUNT = HYPOTHETICAL_MAX_AMOUNT_PARTICLES / BUCKET_SIZE;
+static const int BUCKET_COUNT_X = GRID_WIDTH_PIXELS / BUCKET_WIDTH;
+static const int BUCKET_MAX_AMOUNT_OF_CONTENT = 64;
+
+static const int MAX_AMOUNT_OF_NEIGHBORS = BUCKET_CLUSTER_SIZE * BUCKET_MAX_AMOUNT_OF_CONTENT;
+
+
+static const int ELEMENT_COUNT = 1;
+
+static const float Mass[ELEMENT_COUNT] = { 
+	MASS * 1.0 
+};
+static const float Viscosity[ELEMENT_COUNT] = {
+	VISC * 1.0
+};
+static const float TemperatureFreezingPoint[ELEMENT_COUNT] = {
+	273.15
+};
+static const float TemperatureBoilingPoint[ELEMENT_COUNT] = {
+	373.15
+};
+static const float RepelStrengthSolid[ELEMENT_COUNT] = {
+	1.75
+};
+static const float RepelStrengthLiquid[ELEMENT_COUNT] = {
+	1.5
+};
+static const float RepelStrengthGas[ELEMENT_COUNT] = {
+	2.0
+};
+static const float ThermalDiffusivitySolid[ELEMENT_COUNT] = {
+	1.0
+};
+static const float ThermalDiffusivityLiquid[ELEMENT_COUNT] = {
+	0.75
+};
+static const float ThermalDiffusivityGas[ELEMENT_COUNT] = {
+	0.5
+};
+
+struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's Particle
 	float2 pos;
 	float2 velocity; 
 	float2 force;
+
 	float density;
 	float pressure;
-	half isAlive;
+	float temperature;
+	float temperatureStartFrame;
+	float repelFactor;
 
-	void TryApplyChanges(ElementParticle particle, half shouldApply){
-		pos 		= lerp(pos, 		particle.pos, 		shouldApply);
-		velocity 	= lerp(velocity, 	particle.velocity, 	shouldApply);
-		force 		= lerp(force, 		particle.force, 	shouldApply);
-		density 	= lerp(density, 	particle.density, 	shouldApply);
-		pressure 	= lerp(pressure, 	particle.pressure, 	shouldApply);
-		isAlive		= lerp(isAlive,		particle.isAlive,	shouldApply);
+	int elementIndex;
+	int bucketIndex;
+
+	float IsSolid() {
+		return max(0, sign(GetFreezingPoint() + STATE_CORRECTION_OFFSET - temperature));
+	}
+
+	float IsLiquid() {
+		return max(0, sign(GetBoilingPoint() - STATE_CORRECTION_OFFSET - temperature)) - IsSolid();
+	}
+
+	float IsGas() {
+		return max(0, sign(temperature - GetBoilingPoint() + STATE_CORRECTION_OFFSET));
+	}
+
+	float GetThermalDiffusivity() {
+		return THERMAL_DIFFUSIVITY * ((IsSolid() * GetThermalDiffusivitySolid()) + (IsLiquid() * GetThermalDiffusivityLiquid()) + (IsGas() * GetThermalDiffusivityGas()));
+	}
+
+	float GetMass()						{ return Mass[elementIndex]; }
+	float GetViscosity()				{ return Viscosity[elementIndex]; }
+	float GetFreezingPoint()			{ return TemperatureFreezingPoint[elementIndex]; }
+	float GetBoilingPoint()				{ return TemperatureBoilingPoint[elementIndex]; }
+	float GetRepelStremgthSolid()		{ return RepelStrengthSolid[elementIndex]; }
+	float GetRepelStremgthLiquid()		{ return RepelStrengthLiquid[elementIndex]; }
+	float GetRepelStremgthGas()			{ return RepelStrengthGas[elementIndex]; }
+	float GetThermalDiffusivitySolid()	{ return ThermalDiffusivitySolid[elementIndex]; }
+	float GetThermalDiffusivityLiquid()	{ return ThermalDiffusivityLiquid[elementIndex]; }
+	float GetThermalDiffusivityGas()	{ return ThermalDiffusivityGas[elementIndex]; }
+
+	void SetTemperature(float temp){
+		temperature = clamp(temp, 0.0f, MAX_TEMPERATURE);
+
+		float isSolid = IsSolid();
+		float isLiquid = IsLiquid();
+		float isGas = IsGas();
+
+		float repelStrengthSolid = GetRepelStremgthSolid();
+		float repelStrengthLiquid = GetRepelStremgthLiquid();
+		float repelStrengthGas = GetRepelStremgthGas();
+
+		// to prevent melting causing explosions, lerp the repelstrength
+		float repelStrengthSmoothedSolidToLiquid = lerp(repelStrengthSolid, repelStrengthLiquid, (temp - GetFreezingPoint() * REPEL_STRENGTH_SMOOTHING_START_SOLID) / (GetFreezingPoint() - GetFreezingPoint() * REPEL_STRENGTH_SMOOTHING_START_SOLID));
+		float repelStrengthSmoothedLiquidToGas = lerp(repelStrengthLiquid, repelStrengthGas, (temp - GetBoilingPoint() * REPEL_STRENGTH_SMOOTHING_START_SOLID) / (GetBoilingPoint() - GetBoilingPoint() * REPEL_STRENGTH_SMOOTHING_START_SOLID));
+
+		// each state has a fixed strength, but gas continues the more temperature increases
+		repelFactor = 0.0;
+		repelFactor += (1.0 / repelStrengthSmoothedSolidToLiquid) * isSolid;
+		repelFactor += (1.0 / repelStrengthSmoothedLiquidToGas) * isLiquid;
+		repelFactor += (1.0 / repelStrengthGas) * isGas;
+
+		float extraRepelFactor = 1.0 / max(REPEL_STRENGTH_MIN, temperature / MAX_TEMPERATURE * REPEL_STRENGTH_MAX);
+		repelFactor += (extraRepelFactor - repelFactor) * isGas;
+
+		repelFactor = clamp(repelFactor, REPEL_FACTOR_MIN, REPEL_FACTOR_MAX); // just a safeguard
 	}
 };
 
+struct Bucket {
+	int content[BUCKET_MAX_AMOUNT_OF_CONTENT];
+	int latestIndexAddedTo;
 
+	void Clear() {
+		latestIndexAddedTo = -1;
+		for (int i = 0; i < BUCKET_MAX_AMOUNT_OF_CONTENT; i++){
+			content[i] = -1;
+		}
+	}
+	void AddContent(int newContent) {
+		latestIndexAddedTo++; // TODO: needs to be replaced with something more modular!
+		content[latestIndexAddedTo] = newContent;
+	}
+
+	int GetContent(out int returnContent[BUCKET_MAX_AMOUNT_OF_CONTENT]) {
+		returnContent = content;
+		return BUCKET_MAX_AMOUNT_OF_CONTENT;
+	}
+	int GetContentAmount(){
+		return latestIndexAddedTo + 1;
+	}
+};
+
+RWStructuredBuffer<Particle> particles;
+RWStructuredBuffer<Bucket> buckets;
 int particleCount;
-RWStructuredBuffer<ElementParticle> particles;
-RWTexture2D<float4> output;
+int bucketCount;
 
-float GetNormSquared(float2 v){
-	return pow(v.x, 2) + pow(v.y, 2);
+
+void GetParticleBucketIndex(float2 pos, out int index, out int x, out int y) {
+	float bucketWidth = BUCKET_WIDTH;
+	x = floor(pos.x / bucketWidth);
+	y = floor(pos.y / bucketWidth);
+	index = y * BUCKET_COUNT_X + x;
 }
 
-float GetNorm(float2 v) {
-	return sqrt(GetNormSquared(v));
+void CacheParticlesInBuckets() {
+	for (int bIndex = 0; bIndex < bucketCount; bIndex++){
+		buckets[bIndex].Clear();
+	}
+	for (int pIndex = 0; pIndex < particleCount; pIndex++){
+		Particle particle = particles[pIndex];
+
+		int index;
+		int x, y;
+		GetParticleBucketIndex(particle.pos, index, x, y);
+		
+		particles[pIndex].bucketIndex = index;
+		buckets[index].AddContent(pIndex);
+	}
+}
+
+int bucketGridPosXs[BUCKET_CLUSTER_SIZE];
+int bucketGridPosYs[BUCKET_CLUSTER_SIZE];
+int bucketIndices[BUCKET_CLUSTER_SIZE];
+void TryAddBucketContentsToNeighbors(int clusterIndex, inout int neighbors[MAX_AMOUNT_OF_NEIGHBORS], inout int addedCount){
+	int bucketGridPosX = bucketGridPosXs[clusterIndex];
+	int bucketGridPosY = bucketGridPosYs[clusterIndex];
+	int isWithinGrid = floor((sign(bucketGridPosX) + sign(bucketGridPosY) + clamp(sign(BUCKET_COUNT_X - 1 - bucketGridPosX), 0, 1) + clamp(sign(BUCKET_COUNT_X - 1 - bucketGridPosY), 0, 1)) / 4.0);
+
+	int bucketIndex = clamp(bucketIndices[clusterIndex], 0, bucketCount);
+	int bucketContent[BUCKET_MAX_AMOUNT_OF_CONTENT];
+	int bucketContentCount = buckets[bucketIndex].GetContent(bucketContent);
+
+	for (int contentIndex = 0; contentIndex < bucketContentCount; contentIndex++){
+		int content = bucketContent[contentIndex]; ahdearce // continue trying to fix bucketing
+		int hasFoundContent = clamp(sign(content), 0, 1);
+		int shouldAddContent = floor((isWithinGrid + hasFoundContent) / 2.0);
+		neighbors[addedCount] = lerp(-1, content, shouldAddContent);
+		addedCount += shouldAddContent;
+	}
+}
+
+int GetNeighborParticleIndices(float2 pos, out int neighbors[MAX_AMOUNT_OF_NEIGHBORS]) {
+	int centerBucketIndex;
+	int centerBucketX;
+	int centerBucketY;
+	GetParticleBucketIndex(pos, centerBucketIndex, centerBucketX, centerBucketY);
+
+	bucketIndices[0] = centerBucketIndex + BUCKET_COUNT_X - 1;
+	bucketIndices[1] = centerBucketIndex + BUCKET_COUNT_X;
+	bucketIndices[2] = centerBucketIndex + BUCKET_COUNT_X + 1;
+	bucketIndices[3] = centerBucketIndex - 1;
+	bucketIndices[4] = centerBucketIndex;
+	bucketIndices[5] = centerBucketIndex + 1;
+	bucketIndices[6] = centerBucketIndex - BUCKET_COUNT_X - 1;
+	bucketIndices[7] = centerBucketIndex - BUCKET_COUNT_X;
+	bucketIndices[8] = centerBucketIndex - BUCKET_COUNT_X + 1;
+
+	bucketGridPosXs[0] = centerBucketX - 1;
+	bucketGridPosYs[0] = centerBucketY + 1;
+
+	bucketGridPosXs[1] = centerBucketX;
+	bucketGridPosYs[1] = centerBucketY + 1;
+	
+	bucketGridPosXs[2] = centerBucketX + 1;
+	bucketGridPosYs[2] = centerBucketY + 1;
+	
+	bucketGridPosXs[3] = centerBucketX - 1;
+	bucketGridPosYs[3] = centerBucketY;
+	
+	bucketGridPosXs[4] = centerBucketX;
+	bucketGridPosYs[4] = centerBucketY;
+	
+	bucketGridPosXs[5] = centerBucketX + 1;
+	bucketGridPosYs[5] = centerBucketY;
+	
+	bucketGridPosXs[6] = centerBucketX - 1;
+	bucketGridPosYs[6] = centerBucketY - 1;
+	
+	bucketGridPosXs[7] = centerBucketX;
+	bucketGridPosYs[7] = centerBucketY - 1;
+	
+	bucketGridPosXs[8] = centerBucketX + 1;
+	bucketGridPosYs[8] = centerBucketY - 1;
+
+	int addedCount = 0;
+	TryAddBucketContentsToNeighbors(0, neighbors, addedCount);
+	TryAddBucketContentsToNeighbors(1, neighbors, addedCount);
+	TryAddBucketContentsToNeighbors(2, neighbors, addedCount);
+	TryAddBucketContentsToNeighbors(3, neighbors, addedCount);
+	TryAddBucketContentsToNeighbors(4, neighbors, addedCount);
+	TryAddBucketContentsToNeighbors(5, neighbors, addedCount);
+	TryAddBucketContentsToNeighbors(6, neighbors, addedCount);
+	TryAddBucketContentsToNeighbors(7, neighbors, addedCount);
+	TryAddBucketContentsToNeighbors(8, neighbors, addedCount);
+
+
+	// for (int clusterIndex = 0; clusterIndex < BUCKET_CLUSTER_SIZE; clusterIndex++){
+	// 	int bucketGridPosX = bucketGridPosXs[clusterIndex];
+	// 	int bucketGridPosY = bucketGridPosYs[clusterIndex];
+	// 	int isWithinGrid = floor((sign(bucketGridPosX) + sign(bucketGridPosY) + clamp(sign(BUCKET_COUNT_X - 1 - bucketGridPosX), 0, 1) + clamp(sign(BUCKET_COUNT_X - 1 - bucketGridPosY), 0, 1)) / 4.0);
+
+	// 	int bucketIndex = clamp(bucketIndices[clusterIndex], 0, bucketCount);
+	// 	int bucketContent[BUCKET_MAX_AMOUNT_OF_CONTENT];
+	// 	int bucketContentCount = buckets[bucketIndex].GetContent(bucketContent);
+
+	// 	for (int contentIndex = 0; contentIndex < bucketContentCount; contentIndex++){
+	// 		int content = bucketContent[contentIndex];
+	// 		int hasFoundContent = clamp(sign(content), 0, 1);
+	// 		int shouldAddContent = floor((isWithinGrid + hasFoundContent) / 2.0);
+	// 		neighbors[addedCount] = lerp(-1, content, shouldAddContent);
+	// 		addedCount += shouldAddContent;
+	// 	}
+	// }
+	for (int i = addedCount; i < MAX_AMOUNT_OF_NEIGHBORS; i++){
+		neighbors[i] = -1;
+	}
+
+	return addedCount;
 }
 
 [numthreads(64, 1, 1)]
 void ComputeDensityAndPressure(uint3 id : SV_DispatchThreadID) {
-	ElementParticle particle = particles[id.x];
+	Particle particle = particles[id.x];
+
 
 	particle.density = 0.0;
-	for (int i = 0; i < particleCount; i++){ // optimization: replace with grid and iterating over particles in neighboring grid-tiles
-		ElementParticle otherParticle = particles[i];
-		float2 dir = otherParticle.pos - particle.pos;
-		float r2 = GetNormSquared(dir);
+	int neighborIndices[BUCKET_CLUSTER_SIZE * BUCKET_MAX_AMOUNT_OF_CONTENT];
+	int neighborCount = GetNeighborParticleIndices(particle.pos, neighborIndices);
+	for (int i2 = 0; i2 < neighborCount; i2++){
+		int neighborIndex = neighborIndices[i2];
+		float hasFoundNeighbor = clamp(round(neighborIndex + 1), 0, 1);
+		neighborIndex = max(0, neighborIndex);
 
-		// this computation is symmetric
-		half isHSQEqualOrGreaterToR2 = clamp(sign(HSQ - r2), 0, 1);
-		particle.density += isHSQEqualOrGreaterToR2 * MASS * POLY6 * pow(HSQ - r2, 3.0);
+		Particle otherParticle = particles[neighborIndex];
+		float2 dir = otherParticle.pos - particle.pos;
+		float r2 = (dir.x * dir.x + dir.y * dir.y) * max(particle.repelFactor, otherParticle.repelFactor);
+
+		float temperature = particle.temperature;
+		float temperatureStartFrame = particle.temperatureStartFrame;
+		float temperatureOther = otherParticle.temperature;
+		float temperatureStartFrameOther = otherParticle.temperatureStartFrame;
+
+		float shouldApplyTemperature = ceil((clamp(sign(HSQ_TEMPERATURE - r2), 0, 1) + clamp(sign(temperatureStartFrame - temperatureStartFrameOther), 0, 1)) / 2.0);
+		float diffTemperature = temperature - temperatureOther;
+		float exchange = diffTemperature * particle.GetThermalDiffusivity();
+
+		float newTemperature1 = temperature - exchange;
+		float newTemperatureClamped1 = clamp(newTemperature1, 0, MAX_TEMPERATURE);
+
+		float newTemperature2 = temperatureOther + exchange;
+		float newTemperatureClamped2 = clamp(newTemperature2, 0, MAX_TEMPERATURE);
+		
+		float unusedTemperature = max(abs(newTemperatureClamped1 - newTemperature1), abs(newTemperature2 - newTemperatureClamped2));
+
+		float temperatureDelta = hasFoundNeighbor * shouldApplyTemperature * (exchange - unusedTemperature);
+		particle.SetTemperature(temperature - temperatureDelta);
+		otherParticle.SetTemperature(temperatureOther + temperatureDelta);
+		particles[neighborIndex] = otherParticle;
+
+		float shouldApplyDensity = clamp(sign(HSQ - r2), 0, 1);
+		particle.density += shouldApplyDensity * otherParticle.GetMass() * POLY6 * pow(HSQ - r2, 3.0);
 	}
 
 	particle.pressure = GAS_CONST * (particle.density - REST_DENS);
-	particles[id.x].TryApplyChanges(particle, particle.isAlive);
+	particles[id.x] = particle;
 }
 
-[numthreads(64, 1, 1)]
-void ComputeForces(uint3 id : SV_DispatchThreadID) {
-	ElementParticle particle = particles[id.x];
+// [numthreads(64, 1, 1)]
+// void ComputeForces(uint3 id : SV_DispatchThreadID) {
+// 	Particle particle = particles[id.x];
+// 	float2 fpress;
+// 	float2 fvisc;
+// 	float2 fsurftens;
+// 	int neighborIndices[BUCKET_CLUSTER_SIZE * BUCKET_MAX_AMOUNT_OF_CONTENT];
+// 	int neighborCount = GetNeighborParticleIndices(particle.pos, neighborIndices);
+// 	for (int i2 = 0; i2 < neighborCount; i2++){
+// 		int neighborIndex = neighborIndices[i2];
+// 		float hasFoundNeighbor = floor((clamp(neighborIndex + 1, 0, 1) + clamp(abs(neighborIndex - id.x), 0, 1)) / 2.0);
+// 		neighborIndex = max(0, neighborIndex);
 
-	float2 fpress = float2(0.0, 0.0);
-	float2 fvisc = float2(0.0, 0.0);
-	for (int i = 0; i < particleCount; i++){ // optimization: replace with grid and iterating over particles in neighboring grid-tiles
-		ElementParticle otherParticle = particles[i];
+// 		Particle otherParticle = particles[neighborIndex];
+// 		float2 diff = otherParticle.pos - particle.pos;
+// 		float2 diffNormal = normalize(diff);
+// 		float r = sqrt(diff.x * diff.x + diff.y * diff.y) * max(particle.repelFactor, otherParticle.repelFactor);
 
-		float2 dir = otherParticle.pos - particle.pos;
-		float r = GetNorm(dir);
+// 		float isTouchingNeighbor = clamp(sign(H - r), 0, 1);
+// 		// compute pressure force contribution
+// 		fpress += hasFoundNeighbor * isTouchingNeighbor * -diffNormal * otherParticle.GetMass() * (particle.pressure + otherParticle.pressure) / (2.0 * otherParticle.density) * SPIKY_GRAD * pow(H - r, 2.0) * CLUSTERING_RESISTANCE;
+// 		// compute viscosity force contribution
+// 		fvisc += hasFoundNeighbor * isTouchingNeighbor * otherParticle.GetViscosity() * otherParticle.GetMass() * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
+		
+// 		// bounce off frozen particles
+// 		float shouldApplyBounce = floor((hasFoundNeighbor + isTouchingNeighbor + otherParticle.IsSolid()) / 3.0);
+// 		particle.velocity.x *= lerp(1.0, diffNormal.x * BOUND_DAMPING, shouldApplyBounce);
+// 		particle.velocity.y *= lerp(1.0, diffNormal.y * BOUND_DAMPING, shouldApplyBounce);
 
-		half isHGreaterOrEqualToR = clamp(sign(H - r), 0, 1);
-		half areParticlesDifferent = clamp(ceil(abs((otherParticle.pos.x - particle.pos.x) + otherParticle.pos.y - particle.pos.y)), 0, 1);
+// 		float shouldApplySurfaceTension = floor((clamp(sign(H_SURFACE_TENSION - r), 0, 1) + particle.IsLiquid()) / 2.0);
+// 		fsurftens += shouldApplySurfaceTension * diffNormal * VISC_LAP * SURFACE_TENSION_WATER;
+// 	}
 
-		// compute pressure force contribution
-		fpress += isHGreaterOrEqualToR * areParticlesDifferent * -normalize(dir) * MASS * (particle.pressure + otherParticle.pressure) / (2.0 * otherParticle.density) * SPIKY_GRAD * pow(H - r, 2.0);
-		// compute viscosity force contribution
-		fvisc += isHGreaterOrEqualToR * areParticlesDifferent * VISC * MASS * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
-	}
+// 	float2 fgrav = G * particle.density;
+// 	particle.force = fpress + fvisc + fgrav + fsurftens;
 
-	float2 fgrav = G * particle.density;
-	particle.force = fpress + fvisc + fgrav;
-	particles[id.x].TryApplyChanges(particle, particle.isAlive);
-}
+// 	particle.temperatureStartFrame = particle.temperature; // for next frame
+// 	particles[id.x] = particle;
+// }
 
+// [numthreads(64, 1, 1)]
+// void Integrate(uint3 id : SV_DispatchThreadID) {
+// 	Particle particle = particles[id.x];
 
-[numthreads(64, 1, 1)]
-void Integrate(uint3 id : SV_DispatchThreadID) {
-	ElementParticle particle = particles[id.x];
+// 	// forward Euler integration
+// 	particle.velocity += DT * particle.force / particle.density;
+// 	particle.pos += DT * particle.velocity;
 
-	// forward Euler integration
-	particle.velocity += DT * particle.force / particle.density;
-	particle.pos += DT * particle.velocity;
+// 	// enforce boundary conditions
+// 	int hasHitEdge = 0;
+// 	if (particle.pos.x - EPS < 0.0){
+// 		particle.velocity.x *= BOUND_DAMPING;
+// 		particle.pos.x = EPS;
+// 		hasHitEdge = 1;
+// 	}
+// 	if (particle.pos.x + EPS > GRID_WIDTH_PIXELS){
+// 		particle.velocity.x *= BOUND_DAMPING;
+// 		particle.pos.x = GRID_WIDTH_PIXELS - EPS;
+// 		hasHitEdge = 1;
+// 	}
+// 	if (particle.pos.y - EPS < 0.0){
+// 		particle.velocity.y *= BOUND_DAMPING;
+// 		particle.pos.y = EPS;
+// 		hasHitEdge = 1;
+// 	}
+// 	if (particle.pos.y + EPS > GRID_HEIGHT_PIXELS){
+// 		particle.velocity.y *= BOUND_DAMPING;
+// 		particle.pos.y = GRID_HEIGHT_PIXELS - EPS;
+// 		hasHitEdge = 1;
+// 	}
 
-	// enforce boundary conditions
-	half isXWithinLeftBorder = clamp(sign(particle.pos.x - EPS), 0, 1);
-	particle.velocity.x = lerp(particle.velocity.x * BOUND_DAMPING, particle.velocity.x, isXWithinLeftBorder);
-	particle.pos.x = lerp(EPS, particle.pos.x, isXWithinLeftBorder);
-	
-	half isXWithinRightBorder = clamp(sign(GRID_WIDTH_PIXELS - (particle.pos.x + EPS)), 0, 1);
-	particle.velocity.x = lerp(particle.velocity.x * BOUND_DAMPING, particle.velocity.x, isXWithinRightBorder);
-	particle.pos.x = lerp(GRID_WIDTH_PIXELS - EPS, particle.pos.x, isXWithinRightBorder);
+// 	// float temperature = particle.temperature;
+// 	// float diffTemperature = temperature - BOUND_TEMPERATURE;
+// 	// float isBoundaryWarmerThanParticle = clamp(sign(BOUND_TEMPERATURE - temperature), 0, 1);
+// 	// float exchange = diffTemperature;
+// 	// exchange *= lerp(particle.GetThermalDiffusivity(), BOUND_THERMAL_DIFFUSIVITY, isBoundaryWarmerThanParticle);
+// 	// particle.SetTemperature(temperature - exchange * hasHitEdge);
 
-	half isYWithinBottomBorder = clamp(sign(particle.pos.y - EPS), 0, 1);
-	particle.velocity.y = lerp(particle.velocity.y * BOUND_DAMPING, particle.velocity.y, isYWithinBottomBorder);
-	particle.pos.y = lerp(EPS, particle.pos.y, isYWithinBottomBorder);
-
-	half isYWithinTopBorder = clamp(sign(GRID_HEIGHT_PIXELS - (particle.pos.y + EPS)), 0, 1);
-	particle.velocity.y = lerp(particle.velocity.y * BOUND_DAMPING, particle.velocity.y, isYWithinTopBorder);
-	particle.pos.y = lerp(GRID_HEIGHT_PIXELS - EPS, particle.pos.y, isYWithinTopBorder);
-
-	particles[id.x].TryApplyChanges(particle, particle.isAlive);
-}
-
-[numthreads(64, 1, 1)]
-void RenderToTexture(uint3 id : SV_DispatchThreadID) {
-	ElementParticle particle = particles[id.x];
-	output[particle.pos] = float4(0, 0, particle.isAlive, particle.isAlive);
-}
+// 	particles[id.x] = particle;
+// }
