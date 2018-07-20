@@ -49,17 +49,15 @@ static const int GRID_WIDTH_TILES = 2;
 static const int GRID_HEIGHT_TILES = 1;
 static const int GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
 static const int GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
-static const int HYPOTHETICAL_MAX_AMOUNT_PARTICLES = (GRID_WIDTH_PIXELS * GRID_HEIGHT_PIXELS) / H;
-static const int BUCKET_WIDTH = 1;
+static const int BIN_WIDTH = 1;
+static const int BIN_COUNT_X = (GRID_WIDTH_PIXELS / BIN_WIDTH) / 2;
+static const int BIN_COUNT_Y = (GRID_HEIGHT_PIXELS / BIN_WIDTH) / 2;
 //===============
 
-static const int BUCKET_CLUSTER_SIZE = 9;
-static const int BUCKET_SIZE = 1;
-static const int BUCKET_COUNT = HYPOTHETICAL_MAX_AMOUNT_PARTICLES / BUCKET_SIZE;
-static const int BUCKET_COUNT_X = GRID_WIDTH_PIXELS / BUCKET_WIDTH;
-static const int BUCKET_MAX_AMOUNT_OF_CONTENT = 64;
+static const int BIN_CLUSTER_SIZE = 9;
+static const int BIN_MAX_AMOUNT_OF_CONTENT = 64;
 
-static const int MAX_AMOUNT_OF_NEIGHBORS = BUCKET_CLUSTER_SIZE * BUCKET_MAX_AMOUNT_OF_CONTENT;
+static const int MAX_AMOUNT_OF_NEIGHBORS = BIN_CLUSTER_SIZE * BIN_MAX_AMOUNT_OF_CONTENT;
 
 
 static const int ELEMENT_COUNT = 1;
@@ -164,171 +162,94 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 	}
 };
 
-struct Bucket {
-	int content[BUCKET_MAX_AMOUNT_OF_CONTENT];
-	int latestIndexAddedTo;
-
-	void Clear() {
-		latestIndexAddedTo = -1;
-		for (int i = 0; i < BUCKET_MAX_AMOUNT_OF_CONTENT; i++){
-			content[i] = -1;
-		}
-	}
-	void AddContent(int newContent) {
-		latestIndexAddedTo++; // TODO: needs to be replaced with something more modular!
-		content[latestIndexAddedTo] = newContent;
-	}
-
-	int GetContent(out int returnContent[BUCKET_MAX_AMOUNT_OF_CONTENT]) {
-		returnContent = content;
-		return BUCKET_MAX_AMOUNT_OF_CONTENT;
-	}
-	int GetContentAmount(){
-		return latestIndexAddedTo + 1;
-	}
-};
-
 RWStructuredBuffer<Particle> particles;
-RWStructuredBuffer<Bucket> buckets;
 int particleCount;
-int bucketCount;
+
+Texture2D binLoads;
+Texture2D binContents[BUCKET_MAX_AMOUNT_OF_CONTENT];
 
 
-void GetParticleBucketIndex(float2 pos, out int index, out int x, out int y) {
-	float bucketWidth = BUCKET_WIDTH;
-	x = floor(pos.x / bucketWidth);
-	y = floor(pos.y / bucketWidth);
-	index = y * BUCKET_COUNT_X + x;
+
+void GetBinCoordinates(float2 pos, out int x, out int y, out fixed4 gridQuadrant) {
+	x = floor(pos.x / BIN_WIDTH);
+	y = floor(pos.y / BIN_WIDTH);
+	CorrectBinPosForQuadrants(x, y, gridQuadrant);
 }
 
-void CacheParticlesInBuckets() {
-	for (int bIndex = 0; bIndex < bucketCount; bIndex++){
-		buckets[bIndex].Clear();
-	}
-	for (int pIndex = 0; pIndex < particleCount; pIndex++){
-		Particle particle = particles[pIndex];
+void CorrectBinPosForQuadrants(inout int x, inout int y, out fixed4 gridQuadrant){
+	int gridQuadrantX = floor(x / BIN_COUNT_X);
+	int gridQuadrantY = floor(y / BIN_COUNT_Y);
 
-		int index;
-		int x, y;
-		GetParticleBucketIndex(particle.pos, index, x, y);
-		
-		particles[pIndex].bucketIndex = index;
-		buckets[index].AddContent(pIndex);
-	}
+	x -= gridQuadrantX * BIN_COUNT_X;
+	y -= gridQuadrantY * BIN_COUNT_Y;
+
+	gridQuadrant.x = 1 - gridQuadrantX;
+	gridQuadrant.y = 1 - gridQuadrantY;
+	gridQuadrant.z = gridQuadrantX;
+	gridQuadrant.w = gridQuadrantY;
 }
 
-int bucketGridPosXs[BUCKET_CLUSTER_SIZE];
-int bucketGridPosYs[BUCKET_CLUSTER_SIZE];
-int bucketIndices[BUCKET_CLUSTER_SIZE];
-void TryAddBucketContentsToNeighbors(int clusterIndex, inout int neighbors[MAX_AMOUNT_OF_NEIGHBORS], inout int addedCount){
-	int bucketGridPosX = bucketGridPosXs[clusterIndex];
-	int bucketGridPosY = bucketGridPosYs[clusterIndex];
-	int isWithinGrid = floor((sign(bucketGridPosX) + sign(bucketGridPosY) + clamp(sign(BUCKET_COUNT_X - 1 - bucketGridPosX), 0, 1) + clamp(sign(BUCKET_COUNT_X - 1 - bucketGridPosY), 0, 1)) / 4.0);
+void AddBinContentsToNeighbors(int binX, int binY, inout nIndex, inout int neighbors[MAX_AMOUNT_OF_NEIGHBORS]){
+	int isXGreaterThanOrEqualToZero = clamp(sign(binX), 0, 1);
+	int isXLessThanMax = clamp(sign(BIN_COUNT_X * 2 - binX), 0, 1);
+	int isYGreaterThanOrEqualToZero = clamp(sign(binY), 0, 1);
+	int isYLessThanMax = clamp(sign(BIN_COUNT_Y * 2 - binY), 0, 1);
+	int isXAndYWithinGrid = floor((isXGreaterThanOrEqualToZero + isYGreaterThanOrEqualToZero + isXLessThanMax + isYLessThanMax) * 0.25);
 
-	int bucketIndex = clamp(bucketIndices[clusterIndex], 0, bucketCount);
-	int bucketContent[BUCKET_MAX_AMOUNT_OF_CONTENT];
-	int bucketContentCount = buckets[bucketIndex].GetContent(bucketContent);
-
-	for (int contentIndex = 0; contentIndex < bucketContentCount; contentIndex++){
-		int content = bucketContent[contentIndex]; ahdearce // continue trying to fix bucketing
-		int hasFoundContent = clamp(sign(content), 0, 1);
-		int shouldAddContent = floor((isWithinGrid + hasFoundContent) / 2.0);
-		neighbors[addedCount] = lerp(-1, content, shouldAddContent);
-		addedCount += shouldAddContent;
+	fixed4 gridQuadrant;
+	CorrectBinPosForQuadrants(binX, binY, gridQuadrant);
+	int addingAmount = isXAndYWithinGrid * (binLoads[binX, binY] * gridQuadrant).rgba;
+	for (int i = 0; i < addingAmount; i++){
+		neighbors[nIndex] = (binContents[i][binX, binY] * gridQuadrant).rgba;
+		nIndex++;
 	}
 }
 
 int GetNeighborParticleIndices(float2 pos, out int neighbors[MAX_AMOUNT_OF_NEIGHBORS]) {
-	int centerBucketIndex;
-	int centerBucketX;
-	int centerBucketY;
-	GetParticleBucketIndex(pos, centerBucketIndex, centerBucketX, centerBucketY);
-
-	bucketIndices[0] = centerBucketIndex + BUCKET_COUNT_X - 1;
-	bucketIndices[1] = centerBucketIndex + BUCKET_COUNT_X;
-	bucketIndices[2] = centerBucketIndex + BUCKET_COUNT_X + 1;
-	bucketIndices[3] = centerBucketIndex - 1;
-	bucketIndices[4] = centerBucketIndex;
-	bucketIndices[5] = centerBucketIndex + 1;
-	bucketIndices[6] = centerBucketIndex - BUCKET_COUNT_X - 1;
-	bucketIndices[7] = centerBucketIndex - BUCKET_COUNT_X;
-	bucketIndices[8] = centerBucketIndex - BUCKET_COUNT_X + 1;
-
-	bucketGridPosXs[0] = centerBucketX - 1;
-	bucketGridPosYs[0] = centerBucketY + 1;
-
-	bucketGridPosXs[1] = centerBucketX;
-	bucketGridPosYs[1] = centerBucketY + 1;
-	
-	bucketGridPosXs[2] = centerBucketX + 1;
-	bucketGridPosYs[2] = centerBucketY + 1;
-	
-	bucketGridPosXs[3] = centerBucketX - 1;
-	bucketGridPosYs[3] = centerBucketY;
-	
-	bucketGridPosXs[4] = centerBucketX;
-	bucketGridPosYs[4] = centerBucketY;
-	
-	bucketGridPosXs[5] = centerBucketX + 1;
-	bucketGridPosYs[5] = centerBucketY;
-	
-	bucketGridPosXs[6] = centerBucketX - 1;
-	bucketGridPosYs[6] = centerBucketY - 1;
-	
-	bucketGridPosXs[7] = centerBucketX;
-	bucketGridPosYs[7] = centerBucketY - 1;
-	
-	bucketGridPosXs[8] = centerBucketX + 1;
-	bucketGridPosYs[8] = centerBucketY - 1;
-
-	int addedCount = 0;
-	TryAddBucketContentsToNeighbors(0, neighbors, addedCount);
-	TryAddBucketContentsToNeighbors(1, neighbors, addedCount);
-	TryAddBucketContentsToNeighbors(2, neighbors, addedCount);
-	TryAddBucketContentsToNeighbors(3, neighbors, addedCount);
-	TryAddBucketContentsToNeighbors(4, neighbors, addedCount);
-	TryAddBucketContentsToNeighbors(5, neighbors, addedCount);
-	TryAddBucketContentsToNeighbors(6, neighbors, addedCount);
-	TryAddBucketContentsToNeighbors(7, neighbors, addedCount);
-	TryAddBucketContentsToNeighbors(8, neighbors, addedCount);
-
-
-	// for (int clusterIndex = 0; clusterIndex < BUCKET_CLUSTER_SIZE; clusterIndex++){
-	// 	int bucketGridPosX = bucketGridPosXs[clusterIndex];
-	// 	int bucketGridPosY = bucketGridPosYs[clusterIndex];
-	// 	int isWithinGrid = floor((sign(bucketGridPosX) + sign(bucketGridPosY) + clamp(sign(BUCKET_COUNT_X - 1 - bucketGridPosX), 0, 1) + clamp(sign(BUCKET_COUNT_X - 1 - bucketGridPosY), 0, 1)) / 4.0);
-
-	// 	int bucketIndex = clamp(bucketIndices[clusterIndex], 0, bucketCount);
-	// 	int bucketContent[BUCKET_MAX_AMOUNT_OF_CONTENT];
-	// 	int bucketContentCount = buckets[bucketIndex].GetContent(bucketContent);
-
-	// 	for (int contentIndex = 0; contentIndex < bucketContentCount; contentIndex++){
-	// 		int content = bucketContent[contentIndex];
-	// 		int hasFoundContent = clamp(sign(content), 0, 1);
-	// 		int shouldAddContent = floor((isWithinGrid + hasFoundContent) / 2.0);
-	// 		neighbors[addedCount] = lerp(-1, content, shouldAddContent);
-	// 		addedCount += shouldAddContent;
-	// 	}
-	// }
-	for (int i = addedCount; i < MAX_AMOUNT_OF_NEIGHBORS; i++){
-		neighbors[i] = -1;
-	}
+	int binX, binY;
+	fixed4 gridQuadrant;
+	int nIndex = 0;
+	GetBinCoordinates(pos, binX, binY, gridQuadrant);
+	AddBinContentsToNeighbors(binX - 1, binY + 1, 	nIndex, neighbors);
+	AddBinContentsToNeighbors(binX, 	binY + 1, 	nIndex, neighbors);
+	AddBinContentsToNeighbors(binX + 1, binY + 1, 	nIndex, neighbors);
+	AddBinContentsToNeighbors(binX - 1, binY, 		nIndex, neighbors);
+	AddBinContentsToNeighbors(binX, 	binY, 		nIndex, neighbors);
+	AddBinContentsToNeighbors(binX + 1, binY, 		nIndex, neighbors);
+	AddBinContentsToNeighbors(binX - 1, binY - 1, 	nIndex, neighbors);
+	AddBinContentsToNeighbors(binX, 	binY - 1, 	nIndex, neighbors);
+	AddBinContentsToNeighbors(binX + 1, binY - 1, 	nIndex, neighbors);
 
 	return addedCount;
+}
+
+void CacheParticleInBin(int pIndex) {
+	int x, y;
+	fixed4 gridQuadrant; // only 1 component == 1, to indicate which corner of the grid we're in (BL, TL, BR, TR)
+	GetBinCoordinates(particle.pos, x, y, gridQuadrant);
+	
+	binLoads[x, y] += gridQuadrant; 
+
+	fixed4 contents = binContents[x, y];
+	contents.x = lerp(content.x, pIndex, gridQuadrant.x);
+	contents.y = lerp(content.y, pIndex, gridQuadrant.y);
+	contents.z = lerp(content.z, pIndex, gridQuadrant.z);
+	contents.w = lerp(content.w, pIndex, gridQuadrant.w);
+	binContents[x, y] = contents;
 }
 
 [numthreads(64, 1, 1)]
 void ComputeDensityAndPressure(uint3 id : SV_DispatchThreadID) {
 	Particle particle = particles[id.x];
 
+	CacheParticleInBin(id.x);
 
-	particle.density = 0.0;
-	int neighborIndices[BUCKET_CLUSTER_SIZE * BUCKET_MAX_AMOUNT_OF_CONTENT];
+	int neighborIndices[BIN_CLUSTER_SIZE * BIN_MAX_AMOUNT_OF_CONTENT];
 	int neighborCount = GetNeighborParticleIndices(particle.pos, neighborIndices);
+	
+	particle.density = 0.0;
 	for (int i2 = 0; i2 < neighborCount; i2++){
 		int neighborIndex = neighborIndices[i2];
-		float hasFoundNeighbor = clamp(round(neighborIndex + 1), 0, 1);
-		neighborIndex = max(0, neighborIndex);
 
 		Particle otherParticle = particles[neighborIndex];
 		float2 dir = otherParticle.pos - particle.pos;
