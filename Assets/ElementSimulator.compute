@@ -1,6 +1,6 @@
 ﻿#pragma kernel ComputeDensityAndPressure
-//#pragma kernel ComputeForces
-//#pragma kernel Integrate
+#pragma kernel ComputeForces
+#pragma kernel Integrate
 
 
 // solver parameters
@@ -13,7 +13,7 @@ static const float HSQ_TEMPERATURE = HSQ * 2.0; // interaction radius
 static const float H_SURFACE_TENSION = H * 3.0; // interaction radius
 static const float MASS = 2.0; // assume all particles have the same mass
 static const float VISC = 250.0; // viscosity constant
-static const float DT = 0.0008; // integration timestep
+static const float DT = 0.0008;// 0.0008; // integration timestep
 static const float DENSITY_OFFSET = 0.925; // make SPIKY_GRAD apply force earlier (particles don't have to be as close)
 static const float VISC_OFFSET = 0.925; // make VISC_LAP apply force earlier (particles don't have to be as close)
 static const float PI = 3.14159265359;
@@ -43,21 +43,23 @@ static const float SURFACE_TENSION_WATER = 5.0;
 static const float STATE_CORRECTION_OFFSET = 0.000001; // offset to ensure two states can't be == 1 at the same time
 static const float REPEL_STRENGTH_SMOOTHING_START_SOLID = 0.9;
 
-// ============== WARNING: shared with ElementSimulator.cs! must be equal!
-static const int PIXELS_PER_TILE_EDGE = 32;
-static const int GRID_WIDTH_TILES = 2;
-static const int GRID_HEIGHT_TILES = 1;
-static const int GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
-static const int GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
-static const int BIN_WIDTH = 1;
-static const int BIN_COUNT_X = (GRID_WIDTH_PIXELS / BIN_WIDTH) / 2;
-static const int BIN_COUNT_Y = (GRID_HEIGHT_PIXELS / BIN_WIDTH) / 2;
-//===============
+static const float ALMOST_BUT_NOT_QUITE_ZERO = 0.00001; // used to prevent division by zero
 
-static const int BIN_CLUSTER_SIZE = 9;
-static const int BIN_MAX_AMOUNT_OF_CONTENT = 64;
+//#region[rgba(80, 0, 0, 1)] | WARNING: shared with ElementSimulator.cs! must be equal!
+static const int THREAD_COUNT_X = 64;
+static const uint PIXELS_PER_TILE_EDGE = 32;
+static const uint GRID_WIDTH_TILES = 2;
+static const uint GRID_HEIGHT_TILES = 1;
+static const uint GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
+static const uint GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
+static const uint BIN_WIDTH = 1;
+static const uint BIN_COUNT_X = (GRID_WIDTH_PIXELS / BIN_WIDTH) / 2;
+static const uint BIN_COUNT_Y = (GRID_HEIGHT_PIXELS / BIN_WIDTH) / 2;
+static const uint BIN_MAX_AMOUNT_OF_CONTENT = 64;
+//#endregion
 
-static const int MAX_AMOUNT_OF_NEIGHBORS = BIN_CLUSTER_SIZE * BIN_MAX_AMOUNT_OF_CONTENT;
+static const uint BIN_CLUSTER_SIZE = 9;
+static const uint BIN_CLUSTER_CONTENT_MAX = BIN_CLUSTER_SIZE * BIN_MAX_AMOUNT_OF_CONTENT;
 
 
 static const int ELEMENT_COUNT = 1;
@@ -103,9 +105,8 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 	float temperature;
 	float temperatureStartFrame;
 	float repelFactor;
-
-	int elementIndex;
-	int bucketIndex;
+	half isActive; // every thread needs a particle, so some will get inactive particles instead
+	uint elementIndex;
 
 	float IsSolid() {
 		return max(0, sign(GetFreezingPoint() + STATE_CORRECTION_OFFSET - temperature));
@@ -135,7 +136,7 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 	float GetThermalDiffusivityGas()	{ return ThermalDiffusivityGas[elementIndex]; }
 
 	void SetTemperature(float temp){
-		temperature = clamp(temp, 0.0f, MAX_TEMPERATURE);
+		temperature = clamp(temp, 0.0, MAX_TEMPERATURE);
 
 		float isSolid = IsSolid();
 		float isLiquid = IsLiquid();
@@ -159,99 +160,120 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 		repelFactor += (extraRepelFactor - repelFactor) * isGas;
 
 		repelFactor = clamp(repelFactor, REPEL_FACTOR_MIN, REPEL_FACTOR_MAX); // just a safeguard
+
+
+		//repelFactor *= 10; // REMOVE THIS
 	}
 };
 
+
 RWStructuredBuffer<Particle> particles;
-int particleCount;
+uint particleCount;
 
-Texture2D binLoads;
-Texture2D binContents[BUCKET_MAX_AMOUNT_OF_CONTENT];
+RWTexture2D<float4> binLoads; // TODO: investigate registers further, to see how variables can be shared between dispatches
+RWTexture2DArray<float4> binContents;
+RWTexture2D<float4> output;
 
 
-
-void GetBinCoordinates(float2 pos, out int x, out int y, out fixed4 gridQuadrant) {
-	x = floor(pos.x / BIN_WIDTH);
-	y = floor(pos.y / BIN_WIDTH);
-	CorrectBinPosForQuadrants(x, y, gridQuadrant);
+uint4 scale(uint4 f1, uint4 f2){
+	return uint4(f1.x * f2.x, f1.y * f2.y, f1.z * f2.z, f1.w * f2.w);
 }
 
-void CorrectBinPosForQuadrants(inout int x, inout int y, out fixed4 gridQuadrant){
-	int gridQuadrantX = floor(x / BIN_COUNT_X);
-	int gridQuadrantY = floor(y / BIN_COUNT_Y);
-
-	x -= gridQuadrantX * BIN_COUNT_X;
-	y -= gridQuadrantY * BIN_COUNT_Y;
-
-	gridQuadrant.x = 1 - gridQuadrantX;
-	gridQuadrant.y = 1 - gridQuadrantY;
-	gridQuadrant.z = gridQuadrantX;
-	gridQuadrant.w = gridQuadrantY;
+float PreventValueBeingZero(float f){
+	int fSign = sign(f);
+	return max(ALMOST_BUT_NOT_QUITE_ZERO, abs(f)) * fSign;
 }
+// void CorrectBinPosForQuadrants(inout uint2 pos, out uint4 gridQuadrant){
+// 	uint gridQuadrantX = floor(pos.x / BIN_COUNT_X);
+// 	uint gridQuadrantY = floor(pos.y / BIN_COUNT_Y);
 
-void AddBinContentsToNeighbors(int binX, int binY, inout nIndex, inout int neighbors[MAX_AMOUNT_OF_NEIGHBORS]){
-	int isXGreaterThanOrEqualToZero = clamp(sign(binX), 0, 1);
-	int isXLessThanMax = clamp(sign(BIN_COUNT_X * 2 - binX), 0, 1);
-	int isYGreaterThanOrEqualToZero = clamp(sign(binY), 0, 1);
-	int isYLessThanMax = clamp(sign(BIN_COUNT_Y * 2 - binY), 0, 1);
-	int isXAndYWithinGrid = floor((isXGreaterThanOrEqualToZero + isYGreaterThanOrEqualToZero + isXLessThanMax + isYLessThanMax) * 0.25);
+// 	pos.x -= gridQuadrantX * BIN_COUNT_X;
+// 	pos.y -= gridQuadrantY * BIN_COUNT_Y;
 
-	fixed4 gridQuadrant;
-	CorrectBinPosForQuadrants(binX, binY, gridQuadrant);
-	int addingAmount = isXAndYWithinGrid * (binLoads[binX, binY] * gridQuadrant).rgba;
-	for (int i = 0; i < addingAmount; i++){
-		neighbors[nIndex] = (binContents[i][binX, binY] * gridQuadrant).rgba;
-		nIndex++;
-	}
-}
+// 	gridQuadrant.x = 1 - gridQuadrantX;
+// 	gridQuadrant.y = 1 - gridQuadrantY;
+// 	gridQuadrant.z = gridQuadrantX;
+// 	gridQuadrant.w = gridQuadrantY;
+// }
 
-int GetNeighborParticleIndices(float2 pos, out int neighbors[MAX_AMOUNT_OF_NEIGHBORS]) {
-	int binX, binY;
-	fixed4 gridQuadrant;
-	int nIndex = 0;
-	GetBinCoordinates(pos, binX, binY, gridQuadrant);
-	AddBinContentsToNeighbors(binX - 1, binY + 1, 	nIndex, neighbors);
-	AddBinContentsToNeighbors(binX, 	binY + 1, 	nIndex, neighbors);
-	AddBinContentsToNeighbors(binX + 1, binY + 1, 	nIndex, neighbors);
-	AddBinContentsToNeighbors(binX - 1, binY, 		nIndex, neighbors);
-	AddBinContentsToNeighbors(binX, 	binY, 		nIndex, neighbors);
-	AddBinContentsToNeighbors(binX + 1, binY, 		nIndex, neighbors);
-	AddBinContentsToNeighbors(binX - 1, binY - 1, 	nIndex, neighbors);
-	AddBinContentsToNeighbors(binX, 	binY - 1, 	nIndex, neighbors);
-	AddBinContentsToNeighbors(binX + 1, binY - 1, 	nIndex, neighbors);
+// void GetBinCoordinates(float2 pos, out uint2 binPos, out uint4 gridQuadrant) {
+// 	binPos.x = floor(pos.x / BIN_WIDTH);
+// 	binPos.y = floor(pos.y / BIN_WIDTH);
+// 	CorrectBinPosForQuadrants(binPos, gridQuadrant);
+// }
 
-	return addedCount;
-}
+// void AddBinContentsToNeighbors(uint2 binPos, inout uint nIndex, inout uint neighbors[MAX_AMOUNT_OF_NEIGHBORS]){
+// 	uint isXGreaterThanOrEqualToZero = clamp(sign(binPos.x), 0, 1);
+// 	uint isXLessThanMax = clamp(sign(BIN_COUNT_X * 2 - binPos.x), 0, 1);
+// 	uint isYGreaterThanOrEqualToZero = clamp(sign(binPos.y), 0, 1);
+// 	uint isYLessThanMax = clamp(sign(BIN_COUNT_Y * 2 - binPos.y), 0, 1);
+// 	uint isXAndYWithinGrid = floor((isXGreaterThanOrEqualToZero + isYGreaterThanOrEqualToZero + isXLessThanMax + isYLessThanMax) * 0.25);
 
-void CacheParticleInBin(int pIndex) {
-	int x, y;
-	fixed4 gridQuadrant; // only 1 component == 1, to indicate which corner of the grid we're in (BL, TL, BR, TR)
-	GetBinCoordinates(particle.pos, x, y, gridQuadrant);
+// 	uint4 gridQuadrant;
+// 	CorrectBinPosForQuadrants(binPos, gridQuadrant);
+
+// 	uint4 relevantBinLoads = scale(binLoads[binPos], gridQuadrant);
+// 	uint addingAmount = isXAndYWithinGrid * (relevantBinLoads.r + relevantBinLoads.g + relevantBinLoads.b + relevantBinLoads.a);
+// 	for (uint i = 0; i < addingAmount; i++){
+// 		uint4 neighborContent = binContents[uint3(binPos.x, binPos.y, i)] * gridQuadrant;
+// 		neighbors[nIndex] = neighborContent.x + neighborContent.y + neighborContent.z + neighborContent.w;
+// 		nIndex++;
+// 	}
+// }
+
+// int GetNeighborParticleIndices(float2 pos, out uint neighbors[MAX_AMOUNT_OF_NEIGHBORS]) {
+// 	uint2 binPos;
+// 	uint4 gridQuadrant;
+// 	uint nIndex = 0;
+// 	GetBinCoordinates(pos, binPos, gridQuadrant);
+// 	// AddBinContentsToNeighbors(uint2(binPos.x - 1, binPos.y + 1), 	nIndex, neighbors);
+// 	// AddBinContentsToNeighbors(uint2(binPos.x, 	 binPos.y + 1), 	nIndex, neighbors);
+// 	// AddBinContentsToNeighbors(uint2(binPos.x + 1, binPos.y + 1), 	nIndex, neighbors);
+// 	// AddBinContentsToNeighbors(uint2(binPos.x - 1, binPos.y), 		nIndex, neighbors);
+// 	AddBinContentsToNeighbors(uint2(binPos.x, 	 binPos.y), 		nIndex, neighbors);
+// 	// AddBinContentsToNeighbors(uint2(binPos.x + 1, binPos.y), 		nIndex, neighbors);
+// 	// AddBinContentsToNeighbors(uint2(binPos.x - 1, binPos.y - 1), 	nIndex, neighbors);
+// 	// AddBinContentsToNeighbors(uint2(binPos.x, 	 binPos.y - 1), 	nIndex, neighbors);
+// 	// AddBinContentsToNeighbors(uint2(binPos.x + 1, binPos.y - 1), 	nIndex, neighbors);
 	
-	binLoads[x, y] += gridQuadrant; 
+// 	return nIndex;
+// }
 
-	fixed4 contents = binContents[x, y];
-	contents.x = lerp(content.x, pIndex, gridQuadrant.x);
-	contents.y = lerp(content.y, pIndex, gridQuadrant.y);
-	contents.z = lerp(content.z, pIndex, gridQuadrant.z);
-	contents.w = lerp(content.w, pIndex, gridQuadrant.w);
-	binContents[x, y] = contents;
-}
+// void CacheParticleInBin(uint pIndex) {
+// 	uint2 binPos;
+// 	uint4 gridQuadrant; // only 1 component == 1, to indicate which corner of the grid we're in (BL, TL, BR, TR)
+// 	GetBinCoordinates(particles[pIndex].pos, binPos, gridQuadrant);
+	
+// 	uint4 binLoad = binLoads[binPos];
+// 	uint binContentIndex = binLoad.x * gridQuadrant.x + binLoad.y * gridQuadrant.y + binLoad.z * gridQuadrant.z + binLoad.w * gridQuadrant.w; 
+// 	binLoad += gridQuadrant; 
 
-[numthreads(64, 1, 1)]
+// 	uint3 exactBinPos = uint3(binPos.x, binPos.y, binContentIndex);
+// 	uint4 contents = binContents[exactBinPos];
+// 	contents.x = lerp(contents.x, pIndex, gridQuadrant.x);
+// 	contents.y = lerp(contents.y, pIndex, gridQuadrant.y);
+// 	contents.z = lerp(contents.z, pIndex, gridQuadrant.z);
+// 	contents.w = lerp(contents.w, pIndex, gridQuadrant.w);
+// 	binContents[exactBinPos] = contents;
+// }
+
+[numthreads(THREAD_COUNT_X, 1, 1)]
 void ComputeDensityAndPressure(uint3 id : SV_DispatchThreadID) {
-	Particle particle = particles[id.x];
+Particle particle = particles[id.x];
 
-	CacheParticleInBin(id.x);
+	//	CacheParticleInBin(id.x);
 
-	int neighborIndices[BIN_CLUSTER_SIZE * BIN_MAX_AMOUNT_OF_CONTENT];
-	int neighborCount = GetNeighborParticleIndices(particle.pos, neighborIndices);
+	// uint neighborIndices[BIN_CLUSTER_SIZE * BIN_MAX_AMOUNT_OF_CONTENT];
+	// uint neighborCount = GetNeighborParticleIndices(particle.pos, neighborIndices);
 	
-	particle.density = 0.0;
-	for (int i2 = 0; i2 < neighborCount; i2++){
-		int neighborIndex = neighborIndices[i2];
+	particle.density = ALMOST_BUT_NOT_QUITE_ZERO;
+	int i2 = 0;//for (uint i2 = 0; i2 < particleCount; i2++){
+		uint areParticlesDifferent = clamp(abs(int(id.x - i2)), 0, 1); // remove if binning is implemented
+
+		uint neighborIndex = i2;// neighborIndices[i2];
 
 		Particle otherParticle = particles[neighborIndex];
+		//uint areBothParticlesActive = round((particle.isActive + otherParticle.isActive) * 0.5);
 		float2 dir = otherParticle.pos - particle.pos;
 		float r2 = (dir.x * dir.x + dir.y * dir.y) * max(particle.repelFactor, otherParticle.repelFactor);
 
@@ -260,7 +282,7 @@ void ComputeDensityAndPressure(uint3 id : SV_DispatchThreadID) {
 		float temperatureOther = otherParticle.temperature;
 		float temperatureStartFrameOther = otherParticle.temperatureStartFrame;
 
-		float shouldApplyTemperature = ceil((clamp(sign(HSQ_TEMPERATURE - r2), 0, 1) + clamp(sign(temperatureStartFrame - temperatureStartFrameOther), 0, 1)) / 2.0);
+		float shouldApplyTemperature = particle.isActive * otherParticle.isActive * areParticlesDifferent * ceil((clamp(sign(HSQ_TEMPERATURE - r2), 0, 1) + clamp(sign(temperatureStartFrame - temperatureStartFrameOther), 0, 1)) / 2.0);
 		float diffTemperature = temperature - temperatureOther;
 		float exchange = diffTemperature * particle.GetThermalDiffusivity();
 
@@ -272,96 +294,118 @@ void ComputeDensityAndPressure(uint3 id : SV_DispatchThreadID) {
 		
 		float unusedTemperature = max(abs(newTemperatureClamped1 - newTemperature1), abs(newTemperature2 - newTemperatureClamped2));
 
-		float temperatureDelta = hasFoundNeighbor * shouldApplyTemperature * (exchange - unusedTemperature);
+		float temperatureDelta = shouldApplyTemperature * (exchange - unusedTemperature);
 		particle.SetTemperature(temperature - temperatureDelta);
-		otherParticle.SetTemperature(temperatureOther + temperatureDelta);
-		particles[neighborIndex] = otherParticle;
+		// otherParticle.SetTemperature(temperatureOther + temperatureDelta);
+		// if () { // REMOVE THIS
+		// 	particles[neighborIndex] = otherParticle;
+		// }
 
-		float shouldApplyDensity = clamp(sign(HSQ - r2), 0, 1);
+		float shouldApplyDensity = particle.isActive * otherParticle.isActive * areParticlesDifferent * clamp(sign(HSQ - r2), 0, 1);
 		particle.density += shouldApplyDensity * otherParticle.GetMass() * POLY6 * pow(HSQ - r2, 3.0);
-	}
+	//}
 
-	particle.pressure = GAS_CONST * (particle.density - REST_DENS);
+	particle.pressure = particle.isActive * GAS_CONST * (particle.density - REST_DENS);
 	particles[id.x] = particle;
 }
 
-// [numthreads(64, 1, 1)]
-// void ComputeForces(uint3 id : SV_DispatchThreadID) {
-// 	Particle particle = particles[id.x];
-// 	float2 fpress;
-// 	float2 fvisc;
-// 	float2 fsurftens;
-// 	int neighborIndices[BUCKET_CLUSTER_SIZE * BUCKET_MAX_AMOUNT_OF_CONTENT];
-// 	int neighborCount = GetNeighborParticleIndices(particle.pos, neighborIndices);
-// 	for (int i2 = 0; i2 < neighborCount; i2++){
-// 		int neighborIndex = neighborIndices[i2];
-// 		float hasFoundNeighbor = floor((clamp(neighborIndex + 1, 0, 1) + clamp(abs(neighborIndex - id.x), 0, 1)) / 2.0);
-// 		neighborIndex = max(0, neighborIndex);
+[numthreads(THREAD_COUNT_X, 1, 1)]
+void ComputeForces(uint3 id : SV_DispatchThreadID) {
+	Particle particle = particles[id.x];
+	float2 fpress = float2(0.0, 0.0);
+	float2 fvisc = float2(0.0, 0.0);
+	float2 fsurftens = float2(0.0, 0.0);
+	// int neighborIndices[BUCKET_CLUSTER_SIZE * BUCKET_MAX_AMOUNT_OF_CONTENT];
+	// int neighborCount = GetNeighborParticleIndices(particle.pos, neighborIndices);
+	int i2 = 0;//for (uint i2 = 0; i2 < particleCount; i2++){
+		uint areParticlesDifferent = clamp(abs(int(id.x - i2)), 0, 1); // remove if binning is implemented
 
-// 		Particle otherParticle = particles[neighborIndex];
-// 		float2 diff = otherParticle.pos - particle.pos;
-// 		float2 diffNormal = normalize(diff);
-// 		float r = sqrt(diff.x * diff.x + diff.y * diff.y) * max(particle.repelFactor, otherParticle.repelFactor);
+		int neighborIndex = i2;// neighborIndices[i2];
+		//float hasFoundNeighbor = floor((clamp(neighborIndex + 1, 0, 1) + clamp(abs(neighborIndex - id.x), 0, 1)) / 2.0);
+		//neighborIndex = max(0, neighborIndex);
 
-// 		float isTouchingNeighbor = clamp(sign(H - r), 0, 1);
-// 		// compute pressure force contribution
-// 		fpress += hasFoundNeighbor * isTouchingNeighbor * -diffNormal * otherParticle.GetMass() * (particle.pressure + otherParticle.pressure) / (2.0 * otherParticle.density) * SPIKY_GRAD * pow(H - r, 2.0) * CLUSTERING_RESISTANCE;
-// 		// compute viscosity force contribution
-// 		fvisc += hasFoundNeighbor * isTouchingNeighbor * otherParticle.GetViscosity() * otherParticle.GetMass() * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
+		Particle otherParticle = particles[neighborIndex];
+		//uint areBothParticlesActive = floor((particle.isActive + otherParticle.isActive) * 0.5);
+		float2 diff = otherParticle.pos - particle.pos;
+		float2 diffNormal = normalize(diff);
+		float r = sqrt(diff.x * diff.x + diff.y * diff.y) * max(particle.repelFactor, otherParticle.repelFactor);
+
+		float isTouchingNeighbor = clamp(sign(H - r), 0, 1);
+		// compute pressure force contribution
+		fpress += /*hasFoundNeighbor * */isTouchingNeighbor * -diffNormal * otherParticle.GetMass() * (particle.pressure + otherParticle.pressure) / (2.0 * otherParticle.density) * SPIKY_GRAD * pow(H - r, 2.0) * CLUSTERING_RESISTANCE;
+		// compute viscosity force contribution
+		fvisc += /*hasFoundNeighbor * */isTouchingNeighbor * otherParticle.GetViscosity() * otherParticle.GetMass() * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
 		
-// 		// bounce off frozen particles
-// 		float shouldApplyBounce = floor((hasFoundNeighbor + isTouchingNeighbor + otherParticle.IsSolid()) / 3.0);
-// 		particle.velocity.x *= lerp(1.0, diffNormal.x * BOUND_DAMPING, shouldApplyBounce);
-// 		particle.velocity.y *= lerp(1.0, diffNormal.y * BOUND_DAMPING, shouldApplyBounce);
+		// bounce off frozen particles
+		float shouldApplyBounce = particle.isActive * otherParticle.isActive * areParticlesDifferent * floor((/*hasFoundNeighbor + */isTouchingNeighbor + otherParticle.IsSolid()) / 3.0);
+		//particle.velocity.x *= lerp(1.0, diffNormal.x * BOUND_DAMPING, shouldApplyBounce);
+		//particle.velocity.y *= lerp(1.0, diffNormal.y * BOUND_DAMPING, shouldApplyBounce);
 
-// 		float shouldApplySurfaceTension = floor((clamp(sign(H_SURFACE_TENSION - r), 0, 1) + particle.IsLiquid()) / 2.0);
-// 		fsurftens += shouldApplySurfaceTension * diffNormal * VISC_LAP * SURFACE_TENSION_WATER;
-// 	}
+		float shouldApplySurfaceTension = particle.isActive * otherParticle.isActive * areParticlesDifferent * floor((clamp(sign(H_SURFACE_TENSION - r), 0, 1) + particle.IsLiquid()) / 2.0);
+		fsurftens += shouldApplySurfaceTension * diffNormal * VISC_LAP * SURFACE_TENSION_WATER;
+		particle.temperature = shouldApplySurfaceTension;
+	//}
 
-// 	float2 fgrav = G * particle.density;
-// 	particle.force = fpress + fvisc + fgrav + fsurftens;
+	float2 fgrav = G * particle.density;
+	particle.force = particle.isActive * (fpress + fvisc + fgrav + fsurftens);
 
-// 	particle.temperatureStartFrame = particle.temperature; // for next frame
-// 	particles[id.x] = particle;
-// }
+	particle.temperatureStartFrame = particle.temperature; // for next frame
+	particles[id.x] = particle;
+}
 
-// [numthreads(64, 1, 1)]
-// void Integrate(uint3 id : SV_DispatchThreadID) {
-// 	Particle particle = particles[id.x];
+[numthreads(THREAD_COUNT_X, 1, 1)]
+void Integrate(uint3 id : SV_DispatchThreadID) {
+	Particle particle = particles[id.x];
 
-// 	// forward Euler integration
-// 	particle.velocity += DT * particle.force / particle.density;
-// 	particle.pos += DT * particle.velocity;
+	particle.force.x = PreventValueBeingZero(particle.force.x);
+	particle.force.y = PreventValueBeingZero(particle.force.y);
+	particle.density = PreventValueBeingZero(particle.density);
 
-// 	// enforce boundary conditions
-// 	int hasHitEdge = 0;
-// 	if (particle.pos.x - EPS < 0.0){
-// 		particle.velocity.x *= BOUND_DAMPING;
-// 		particle.pos.x = EPS;
-// 		hasHitEdge = 1;
-// 	}
-// 	if (particle.pos.x + EPS > GRID_WIDTH_PIXELS){
-// 		particle.velocity.x *= BOUND_DAMPING;
-// 		particle.pos.x = GRID_WIDTH_PIXELS - EPS;
-// 		hasHitEdge = 1;
-// 	}
-// 	if (particle.pos.y - EPS < 0.0){
-// 		particle.velocity.y *= BOUND_DAMPING;
-// 		particle.pos.y = EPS;
-// 		hasHitEdge = 1;
-// 	}
-// 	if (particle.pos.y + EPS > GRID_HEIGHT_PIXELS){
-// 		particle.velocity.y *= BOUND_DAMPING;
-// 		particle.pos.y = GRID_HEIGHT_PIXELS - EPS;
-// 		hasHitEdge = 1;
-// 	}
 
-// 	// float temperature = particle.temperature;
-// 	// float diffTemperature = temperature - BOUND_TEMPERATURE;
-// 	// float isBoundaryWarmerThanParticle = clamp(sign(BOUND_TEMPERATURE - temperature), 0, 1);
-// 	// float exchange = diffTemperature;
-// 	// exchange *= lerp(particle.GetThermalDiffusivity(), BOUND_THERMAL_DIFFUSIVITY, isBoundaryWarmerThanParticle);
-// 	// particle.SetTemperature(temperature - exchange * hasHitEdge);
+	// forward Euler integration
+	particle.velocity += DT * (particle.force / particle.density);
+	particle.pos += DT * particle.velocity;
 
-// 	particles[id.x] = particle;
-// }
+	// enforce boundary conditions
+	// int hasHitEdge = 0;
+	// if (particle.pos.x - EPS < 0.0){
+	// 	particle.velocity.x *= BOUND_DAMPING;
+	// 	particle.pos.x = EPS;
+	// 	hasHitEdge = 1;
+	// }
+	// if (particle.pos.x + EPS > GRID_WIDTH_PIXELS){
+	// 	particle.velocity.x *= BOUND_DAMPING;
+	// 	particle.pos.x = GRID_WIDTH_PIXELS - EPS;
+	// 	hasHitEdge = 1;
+	// }
+	// if (particle.pos.y - EPS < 0.0){
+	// 	particle.velocity.y *= BOUND_DAMPING;
+	// 	particle.pos.y = EPS;
+	// 	hasHitEdge = 1;
+	// }
+	// if (particle.pos.y + EPS > GRID_HEIGHT_PIXELS){
+	// 	particle.velocity.y *= BOUND_DAMPING;
+	// 	particle.pos.y = GRID_HEIGHT_PIXELS - EPS;
+	// 	hasHitEdge = 1;
+	// }
+
+	float oldX = particle.pos.x;
+	float oldY = particle.pos.y;
+	particle.pos.x = clamp(particle.pos.x, EPS, GRID_WIDTH_PIXELS - EPS);
+	particle.pos.y = clamp(particle.pos.y, EPS, GRID_HEIGHT_PIXELS - EPS);
+
+	//particle.velocity.x *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.x - oldX)), 0, 1));
+	//particle.velocity.y *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.y - oldY)), 0, 1));
+
+	// float temperature = particle.temperature;
+	// float diffTemperature = temperature - BOUND_TEMPERATURE;
+	// float isBoundaryWarmerThanParticle = clamp(sign(BOUND_TEMPERATURE - temperature), 0, 1);
+	// float exchange = diffTemperature;
+	// exchange *= lerp(particle.GetThermalDiffusivity(), BOUND_THERMAL_DIFFUSIVITY, isBoundaryWarmerThanParticle);
+	// particle.SetTemperature(temperature - exchange * hasHitEdge);
+
+	if(output[particle.pos].a == 0){ // FIX THIS
+		output[particle.pos] = float4(particle.temperature, 0, 0, 1);// float4(particle.velocity.x * 1000, 0, particle.velocity.y * 1000, particle.isActive);// float4((particle.pos.x / GRID_WIDTH_PIXELS), 0, (particle.pos.y / GRID_HEIGHT_PIXELS), particle.isActive);// float4(0, 0.25, 0.75, particle.isActive);
+	} 
+	particles[id.x] = particle;
+}

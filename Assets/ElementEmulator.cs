@@ -64,8 +64,6 @@ public class ElementEmulator : MonoBehaviour {
 
 	private float nextTimeToUpdate = -1.0f;
 
-	private int flowPixelIndex = -1;
-
 
 	void Awake(){
 		kernelID_Init = shader.FindKernel(KERNEL_INIT);
