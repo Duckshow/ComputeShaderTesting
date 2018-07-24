@@ -119,7 +119,7 @@ public class ElementSimulator : MonoBehaviour {
 			
 			Particle particle = particles[i];
 
-			float jitterX = 0;//Random.value * 10;
+			float jitterX = Random.value * 10;
 			particle.Pos = new Vector2(x + jitterX, y);
 			particle.Temperature = Mathf.Round(Random.value);//0.0f;
 			particle.ElementIndex = 0;
@@ -177,7 +177,7 @@ public class ElementSimulator : MonoBehaviour {
 		material.mainTexture = output;
 
 
-		Debug.Log(particles[10].Pos); oamroäe // try to figure out why nothing is changing over time...
+		Debug.Log(particles[10].Pos * 1000000000);
 	}
 
 #region C# version of SPH

@@ -4,7 +4,7 @@
 
 
 // solver parameters
-static const float2 G = float2(0, 0);//300 * -9.8f); // external (gravitational) forces
+static const float2 G = float2(0, 300 * -9.8); // external (gravitational) forces
 static const float REST_DENS = 1000.0; // rest density
 static const float GAS_CONST = 2000.0; // const for equation of state
 static const float H = 0.5; // interaction radius
@@ -267,7 +267,8 @@ Particle particle = particles[id.x];
 	// uint neighborCount = GetNeighborParticleIndices(particle.pos, neighborIndices);
 	
 	particle.density = ALMOST_BUT_NOT_QUITE_ZERO;
-	int i2 = 0;//for (uint i2 = 0; i2 < particleCount; i2++){
+	//int i2 = 0;
+	for (uint i2 = 0; i2 < particleCount; i2++){
 		uint areParticlesDifferent = clamp(abs(int(id.x - i2)), 0, 1); // remove if binning is implemented
 
 		uint neighborIndex = i2;// neighborIndices[i2];
@@ -303,7 +304,7 @@ Particle particle = particles[id.x];
 
 		float shouldApplyDensity = particle.isActive * otherParticle.isActive * areParticlesDifferent * clamp(sign(HSQ - r2), 0, 1);
 		particle.density += shouldApplyDensity * otherParticle.GetMass() * POLY6 * pow(HSQ - r2, 3.0);
-	//}
+	}
 
 	particle.pressure = particle.isActive * GAS_CONST * (particle.density - REST_DENS);
 	particles[id.x] = particle;
@@ -317,7 +318,8 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 	float2 fsurftens = float2(0.0, 0.0);
 	// int neighborIndices[BUCKET_CLUSTER_SIZE * BUCKET_MAX_AMOUNT_OF_CONTENT];
 	// int neighborCount = GetNeighborParticleIndices(particle.pos, neighborIndices);
-	int i2 = 0;//for (uint i2 = 0; i2 < particleCount; i2++){
+	//int i2 = 0;
+	for (uint i2 = 0; i2 < particleCount; i2++){
 		uint areParticlesDifferent = clamp(abs(int(id.x - i2)), 0, 1); // remove if binning is implemented
 
 		int neighborIndex = i2;// neighborIndices[i2];
@@ -343,13 +345,13 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 
 		float shouldApplySurfaceTension = particle.isActive * otherParticle.isActive * areParticlesDifferent * floor((clamp(sign(H_SURFACE_TENSION - r), 0, 1) + particle.IsLiquid()) / 2.0);
 		fsurftens += shouldApplySurfaceTension * diffNormal * VISC_LAP * SURFACE_TENSION_WATER;
-		particle.temperature = shouldApplySurfaceTension;
-	//}
+	}
 
 	float2 fgrav = G * particle.density;
 	particle.force = particle.isActive * (fpress + fvisc + fgrav + fsurftens);
 
 	particle.temperatureStartFrame = particle.temperature; // for next frame
+	particle.temperature = abs(fvisc.y + fgrav.y + fsurftens.y); dapmda // continue here. For some reason, adding a positive value to a zero value gices... zero. I'm not sure what's going on here :()
 	particles[id.x] = particle;
 }
 
@@ -405,7 +407,8 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 	// particle.SetTemperature(temperature - exchange * hasHitEdge);
 
 	if(output[particle.pos].a == 0){ // FIX THIS
-		output[particle.pos] = float4(particle.temperature, 0, 0, 1);// float4(particle.velocity.x * 1000, 0, particle.velocity.y * 1000, particle.isActive);// float4((particle.pos.x / GRID_WIDTH_PIXELS), 0, (particle.pos.y / GRID_HEIGHT_PIXELS), particle.isActive);// float4(0, 0.25, 0.75, particle.isActive);
+		bool isNo10 = id.x == 10;
+		output[particle.pos] = float4(particle.temperature, 0, isNo10, particle.isActive);// float4(particle.velocity.x * 1000, 0, particle.velocity.y * 1000, particle.isActive);// float4((particle.pos.x / GRID_WIDTH_PIXELS), 0, (particle.pos.y / GRID_HEIGHT_PIXELS), particle.isActive);// float4(0, 0.25, 0.75, particle.isActive);
 	} 
 	particles[id.x] = particle;
 }
