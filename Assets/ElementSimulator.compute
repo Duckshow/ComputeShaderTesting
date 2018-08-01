@@ -1,12 +1,13 @@
-﻿#pragma kernel ComputeDensityAndPressure
+﻿#pragma kernel ClearOutputTexture
+#pragma kernel ComputeDensityAndPressure
 #pragma kernel ComputeForces
 #pragma kernel Integrate
 
 
 // solver parameters
-static const float2 G = float2(0, 300 * -9.8); // external (gravitational) forces
-static const float REST_DENS = 1000.0; // rest density
-static const float GAS_CONST = 2000.0; // const for equation of state
+static const float2 G = float2(600 * -9.8, 600 * -9.8); // external (gravitational) forces
+static const float REST_DENS = 1000; // rest density
+static const float GAS_CONST = 2000; // const for equation of state
 static const float H = 0.5; // interaction radius
 static const float HSQ = H * H; // radius^2 for optimization
 static const float HSQ_TEMPERATURE = HSQ * 2.0; // interaction radius
@@ -46,9 +47,12 @@ static const float REPEL_STRENGTH_SMOOTHING_START_SOLID = 0.9;
 static const float ALMOST_BUT_NOT_QUITE_ZERO = 0.00001; // used to prevent division by zero
 
 //#region[rgba(80, 0, 0, 1)] | WARNING: shared with ElementSimulator.cs! must be equal!
+static const int OUTPUT_THREAD_COUNT_X = 32;
+static const int OUTPUT_THREAD_COUNT_Y = 32;
+
 static const int THREAD_COUNT_X = 64;
 static const uint PIXELS_PER_TILE_EDGE = 32;
-static const uint GRID_WIDTH_TILES = 2;
+static const uint GRID_WIDTH_TILES = 1;
 static const uint GRID_HEIGHT_TILES = 1;
 static const uint GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
 static const uint GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
@@ -95,6 +99,32 @@ static const float ThermalDiffusivityGas[ELEMENT_COUNT] = {
 	0.5
 };
 
+
+uint4 scale(uint4 f1, uint4 f2){
+	return uint4(f1.x * f2.x, f1.y * f2.y, f1.z * f2.z, f1.w * f2.w);
+}
+
+int signNotZero(float f){
+	int fSignActual = sign(f);
+	return lerp(1, fSignActual, abs(fSignActual));
+}
+
+int sign01(float f){
+	return clamp(sign(f), 0, 1);
+}
+
+int signAbs(float f){
+	return abs(sign(f));
+}
+
+float PreventValueBeingZero(float f){
+	return max(ALMOST_BUT_NOT_QUITE_ZERO, abs(f)) * signNotZero(f);
+}
+
+float2 PreventValueBeingZero(float2 f2){
+	return float2(PreventValueBeingZero(f2.x), PreventValueBeingZero(f2.y));
+}
+
 struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's Particle
 	float2 pos;
 	float2 velocity; 
@@ -107,44 +137,50 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 	float repelFactor;
 	half isActive; // every thread needs a particle, so some will get inactive particles instead
 	uint elementIndex;
+	float debug1;
+	float debug2;
+	float debug3;
+	float debug4;
+	float debug5;
 
 	float IsSolid() {
-		return max(0, sign(GetFreezingPoint() + STATE_CORRECTION_OFFSET - temperature));
+		return step(temperature, GetFreezingPoint() + STATE_CORRECTION_OFFSET);
 	}
 
 	float IsLiquid() {
-		return max(0, sign(GetBoilingPoint() - STATE_CORRECTION_OFFSET - temperature)) - IsSolid();
+		return step(temperature, GetBoilingPoint() - STATE_CORRECTION_OFFSET) - IsSolid();
 	}
 
 	float IsGas() {
-		return max(0, sign(temperature - GetBoilingPoint() + STATE_CORRECTION_OFFSET));
+		return step(temperature, GetBoilingPoint() + STATE_CORRECTION_OFFSET);
 	}
 
 	float GetThermalDiffusivity() {
-		return THERMAL_DIFFUSIVITY * ((IsSolid() * GetThermalDiffusivitySolid()) + (IsLiquid() * GetThermalDiffusivityLiquid()) + (IsGas() * GetThermalDiffusivityGas()));
+		return 0.7;//THERMAL_DIFFUSIVITY * ((IsSolid() * GetThermalDiffusivitySolid()) + (IsLiquid() * GetThermalDiffusivityLiquid()) + (IsGas() * GetThermalDiffusivityGas()));
 	}
 
 	float GetMass()						{ return Mass[elementIndex]; }
 	float GetViscosity()				{ return Viscosity[elementIndex]; }
 	float GetFreezingPoint()			{ return TemperatureFreezingPoint[elementIndex]; }
 	float GetBoilingPoint()				{ return TemperatureBoilingPoint[elementIndex]; }
-	float GetRepelStremgthSolid()		{ return RepelStrengthSolid[elementIndex]; }
-	float GetRepelStremgthLiquid()		{ return RepelStrengthLiquid[elementIndex]; }
-	float GetRepelStremgthGas()			{ return RepelStrengthGas[elementIndex]; }
+	float GetRepelStrengthSolid()		{ return RepelStrengthSolid[elementIndex]; }
+	float GetRepelStrengthLiquid()		{ return RepelStrengthLiquid[elementIndex]; }
+	float GetRepelStrengthGas()			{ return RepelStrengthGas[elementIndex]; }
+	float GetRepelStrengthCurrent()		{ return IsSolid() * GetRepelStrengthSolid() + IsLiquid() * GetRepelStrengthLiquid() + IsGas() * GetRepelStrengthGas(); }
 	float GetThermalDiffusivitySolid()	{ return ThermalDiffusivitySolid[elementIndex]; }
 	float GetThermalDiffusivityLiquid()	{ return ThermalDiffusivityLiquid[elementIndex]; }
 	float GetThermalDiffusivityGas()	{ return ThermalDiffusivityGas[elementIndex]; }
 
 	void SetTemperature(float temp){
-		temperature = clamp(temp, 0.0, MAX_TEMPERATURE);
+		temperature = temp;// clamp(temp, 0.0, MAX_TEMPERATURE);
 
 		float isSolid = IsSolid();
 		float isLiquid = IsLiquid();
 		float isGas = IsGas();
 
-		float repelStrengthSolid = GetRepelStremgthSolid();
-		float repelStrengthLiquid = GetRepelStremgthLiquid();
-		float repelStrengthGas = GetRepelStremgthGas();
+		float repelStrengthSolid = GetRepelStrengthSolid();
+		float repelStrengthLiquid = GetRepelStrengthLiquid();
+		float repelStrengthGas = GetRepelStrengthGas();
 
 		// to prevent melting causing explosions, lerp the repelstrength
 		float repelStrengthSmoothedSolidToLiquid = lerp(repelStrengthSolid, repelStrengthLiquid, (temp - GetFreezingPoint() * REPEL_STRENGTH_SMOOTHING_START_SOLID) / (GetFreezingPoint() - GetFreezingPoint() * REPEL_STRENGTH_SMOOTHING_START_SOLID));
@@ -156,13 +192,10 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 		repelFactor += (1.0 / repelStrengthSmoothedLiquidToGas) * isLiquid;
 		repelFactor += (1.0 / repelStrengthGas) * isGas;
 
-		float extraRepelFactor = 1.0 / max(REPEL_STRENGTH_MIN, temperature / MAX_TEMPERATURE * REPEL_STRENGTH_MAX);
+		float extraRepelFactor = 1.0 / clamp(max(REPEL_STRENGTH_MIN, temperature / MAX_TEMPERATURE * REPEL_STRENGTH_MAX), REPEL_STRENGTH_MIN, REPEL_STRENGTH_MAX);
 		repelFactor += (extraRepelFactor - repelFactor) * isGas;
 
 		repelFactor = clamp(repelFactor, REPEL_FACTOR_MIN, REPEL_FACTOR_MAX); // just a safeguard
-
-
-		//repelFactor *= 10; // REMOVE THIS
 	}
 };
 
@@ -175,14 +208,6 @@ RWTexture2DArray<float4> binContents;
 RWTexture2D<float4> output;
 
 
-uint4 scale(uint4 f1, uint4 f2){
-	return uint4(f1.x * f2.x, f1.y * f2.y, f1.z * f2.z, f1.w * f2.w);
-}
-
-float PreventValueBeingZero(float f){
-	int fSign = sign(f);
-	return max(ALMOST_BUT_NOT_QUITE_ZERO, abs(f)) * fSign;
-}
 // void CorrectBinPosForQuadrants(inout uint2 pos, out uint4 gridQuadrant){
 // 	uint gridQuadrantX = floor(pos.x / BIN_COUNT_X);
 // 	uint gridQuadrantY = floor(pos.y / BIN_COUNT_Y);
@@ -257,55 +282,63 @@ float PreventValueBeingZero(float f){
 // 	binContents[exactBinPos] = contents;
 // }
 
+[numthreads(OUTPUT_THREAD_COUNT_X, OUTPUT_THREAD_COUNT_Y, 1)]
+void ClearOutputTexture(uint3 id : SV_DispatchThreadID) {
+	output[id.xy] = float4(0, 0, 0, 0);
+}
+
 [numthreads(THREAD_COUNT_X, 1, 1)]
 void ComputeDensityAndPressure(uint3 id : SV_DispatchThreadID) {
-Particle particle = particles[id.x];
+	Particle particle = particles[id.x];
 
 	//	CacheParticleInBin(id.x);
 
 	// uint neighborIndices[BIN_CLUSTER_SIZE * BIN_MAX_AMOUNT_OF_CONTENT];
 	// uint neighborCount = GetNeighborParticleIndices(particle.pos, neighborIndices);
-	
-	particle.density = ALMOST_BUT_NOT_QUITE_ZERO;
-	//int i2 = 0;
-	for (uint i2 = 0; i2 < particleCount; i2++){
-		uint areParticlesDifferent = clamp(abs(int(id.x - i2)), 0, 1); // remove if binning is implemented
 
-		uint neighborIndex = i2;// neighborIndices[i2];
+	half density = 0.0;
+	half temperatureToGive = particle.temperature;
+
+	//uint i2 = 0, i = 1 - id.x;
+	for (uint i2 = 0, i = id.x; i2 < particleCount; i2++, i = (i + 1) % particleCount){
+		uint neighborIndex = i;// neighborIndices[i2];
 
 		Particle otherParticle = particles[neighborIndex];
-		//uint areBothParticlesActive = round((particle.isActive + otherParticle.isActive) * 0.5);
 		float2 dir = otherParticle.pos - particle.pos;
 		float r2 = (dir.x * dir.x + dir.y * dir.y) * max(particle.repelFactor, otherParticle.repelFactor);
 
-		float temperature = particle.temperature;
-		float temperatureStartFrame = particle.temperatureStartFrame;
-		float temperatureOther = otherParticle.temperature;
-		float temperatureStartFrameOther = otherParticle.temperatureStartFrame;
+		half areBothParticlesActive = particle.isActive * otherParticle.isActive;
+		half shouldApplyDensity = areBothParticlesActive * step(r2, HSQ);
+		density += shouldApplyDensity * otherParticle.GetMass() * POLY6 * pow(HSQ - r2, 2.0);
 
-		float shouldApplyTemperature = particle.isActive * otherParticle.isActive * areParticlesDifferent * ceil((clamp(sign(HSQ_TEMPERATURE - r2), 0, 1) + clamp(sign(temperatureStartFrame - temperatureStartFrameOther), 0, 1)) / 2.0);
-		float diffTemperature = temperature - temperatureOther;
-		float exchange = diffTemperature * particle.GetThermalDiffusivity();
-
-		float newTemperature1 = temperature - exchange;
-		float newTemperatureClamped1 = clamp(newTemperature1, 0, MAX_TEMPERATURE);
-
-		float newTemperature2 = temperatureOther + exchange;
-		float newTemperatureClamped2 = clamp(newTemperature2, 0, MAX_TEMPERATURE);
+		half temperature = particle.temperature;
+		half temperatureOther = otherParticle.temperature;
+		half temperatureStartFrame = particle.temperatureStartFrame;
+		half temperatureStartFrameOther = otherParticle.temperatureStartFrame;
+		half areParticlesDifferent = signAbs(id.x - i);
+		half isWithinRange = step(r2, HSQ_TEMPERATURE);
+		half isWarmerThanNeighbor = step(temperatureStartFrameOther, temperatureStartFrame);
+		half shouldApplyTemperature = isWarmerThanNeighbor * areParticlesDifferent * areBothParticlesActive * isWithinRange;
+		half exchangeGive = shouldApplyTemperature * (temperatureStartFrame - temperatureStartFrameOther) * particle.GetThermalDiffusivity(); // TODO: instead of using one Thermal Diffusivity, perhaps use the average of both?
+		exchangeGive = min(temperatureToGive, exchangeGive);
+		temperatureToGive -= exchangeGive;
 		
-		float unusedTemperature = max(abs(newTemperatureClamped1 - newTemperature1), abs(newTemperature2 - newTemperatureClamped2));
-
-		float temperatureDelta = shouldApplyTemperature * (exchange - unusedTemperature);
-		particle.SetTemperature(temperature - temperatureDelta);
-		// otherParticle.SetTemperature(temperatureOther + temperatureDelta);
-		// if () { // REMOVE THIS
-		// 	particles[neighborIndex] = otherParticle;
-		// }
-
-		float shouldApplyDensity = particle.isActive * otherParticle.isActive * areParticlesDifferent * clamp(sign(HSQ - r2), 0, 1);
-		particle.density += shouldApplyDensity * otherParticle.GetMass() * POLY6 * pow(HSQ - r2, 3.0);
+		otherParticle.SetTemperature(temperatureOther + exchangeGive);
+		particles[neighborIndex] = otherParticle;
+		
+		if(otherParticle.isActive > 0 && areParticlesDifferent > 0){
+			particles[id.x].debug1 = temperatureOther;
+			particles[id.x].debug2 = exchangeGive;
+		}
 	}
 
+	particle = particles[id.x];
+	particle.debug3 = particle.temperature;
+	particle.debug4 = particle.temperatureStartFrame;
+	particle.debug5 = temperatureToGive;
+
+	particle.density = max(ALMOST_BUT_NOT_QUITE_ZERO, density);
+	particle.SetTemperature(particle.temperature - (particle.temperatureStartFrame - temperatureToGive));
 	particle.pressure = particle.isActive * GAS_CONST * (particle.density - REST_DENS);
 	particles[id.x] = particle;
 }
@@ -318,32 +351,31 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 	float2 fsurftens = float2(0.0, 0.0);
 	// int neighborIndices[BUCKET_CLUSTER_SIZE * BUCKET_MAX_AMOUNT_OF_CONTENT];
 	// int neighborCount = GetNeighborParticleIndices(particle.pos, neighborIndices);
-	//int i2 = 0;
+	//int i2 = id.x;
 	for (uint i2 = 0; i2 < particleCount; i2++){
-		uint areParticlesDifferent = clamp(abs(int(id.x - i2)), 0, 1); // remove if binning is implemented
-
 		int neighborIndex = i2;// neighborIndices[i2];
-		//float hasFoundNeighbor = floor((clamp(neighborIndex + 1, 0, 1) + clamp(abs(neighborIndex - id.x), 0, 1)) / 2.0);
-		//neighborIndex = max(0, neighborIndex);
 
 		Particle otherParticle = particles[neighborIndex];
-		//uint areBothParticlesActive = floor((particle.isActive + otherParticle.isActive) * 0.5);
-		float2 diff = otherParticle.pos - particle.pos;
+		float2 diff = PreventValueBeingZero(otherParticle.pos - particle.pos);
 		float2 diffNormal = normalize(diff);
+
 		float r = sqrt(diff.x * diff.x + diff.y * diff.y) * max(particle.repelFactor, otherParticle.repelFactor);
 
-		float isTouchingNeighbor = clamp(sign(H - r), 0, 1);
+		uint areParticlesDifferent = signAbs(id.x - i2); // remove if binning is implemented
+		uint isTouchingNeighbor = step(r, H);
+		uint shouldApplyAnything = isTouchingNeighbor * areParticlesDifferent * particle.isActive * otherParticle.isActive;
+
 		// compute pressure force contribution
-		fpress += /*hasFoundNeighbor * */isTouchingNeighbor * -diffNormal * otherParticle.GetMass() * (particle.pressure + otherParticle.pressure) / (2.0 * otherParticle.density) * SPIKY_GRAD * pow(H - r, 2.0) * CLUSTERING_RESISTANCE;
+		fpress += shouldApplyAnything * -diffNormal * otherParticle.GetMass() * (particle.pressure + otherParticle.pressure) / (2.0 * otherParticle.density) * SPIKY_GRAD * pow(H - r, 2.0) * CLUSTERING_RESISTANCE;
 		// compute viscosity force contribution
-		fvisc += /*hasFoundNeighbor * */isTouchingNeighbor * otherParticle.GetViscosity() * otherParticle.GetMass() * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
+		fvisc += shouldApplyAnything * otherParticle.GetViscosity() * otherParticle.GetMass() * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
 		
 		// bounce off frozen particles
-		float shouldApplyBounce = particle.isActive * otherParticle.isActive * areParticlesDifferent * floor((/*hasFoundNeighbor + */isTouchingNeighbor + otherParticle.IsSolid()) / 3.0);
-		//particle.velocity.x *= lerp(1.0, diffNormal.x * BOUND_DAMPING, shouldApplyBounce);
-		//particle.velocity.y *= lerp(1.0, diffNormal.y * BOUND_DAMPING, shouldApplyBounce);
+		float shouldApplyBounce = shouldApplyAnything * floor((isTouchingNeighbor + otherParticle.IsSolid()) / 2.0);
+		particle.velocity.x *= lerp(1.0, diffNormal.x * BOUND_DAMPING, shouldApplyBounce);
+		particle.velocity.y *= lerp(1.0, diffNormal.y * BOUND_DAMPING, shouldApplyBounce);
 
-		float shouldApplySurfaceTension = particle.isActive * otherParticle.isActive * areParticlesDifferent * floor((clamp(sign(H_SURFACE_TENSION - r), 0, 1) + particle.IsLiquid()) / 2.0);
+		float shouldApplySurfaceTension = shouldApplyAnything * floor((step(r, H_SURFACE_TENSION) + particle.IsLiquid()) * 0.5);
 		fsurftens += shouldApplySurfaceTension * diffNormal * VISC_LAP * SURFACE_TENSION_WATER;
 	}
 
@@ -351,7 +383,6 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 	particle.force = particle.isActive * (fpress + fvisc + fgrav + fsurftens);
 
 	particle.temperatureStartFrame = particle.temperature; // for next frame
-	particle.temperature = abs(fvisc.y + fgrav.y + fsurftens.y); dapmda // continue here. For some reason, adding a positive value to a zero value gices... zero. I'm not sure what's going on here :()
 	particles[id.x] = particle;
 }
 
@@ -362,7 +393,6 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 	particle.force.x = PreventValueBeingZero(particle.force.x);
 	particle.force.y = PreventValueBeingZero(particle.force.y);
 	particle.density = PreventValueBeingZero(particle.density);
-
 
 	// forward Euler integration
 	particle.velocity += DT * (particle.force / particle.density);
@@ -396,8 +426,8 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 	particle.pos.x = clamp(particle.pos.x, EPS, GRID_WIDTH_PIXELS - EPS);
 	particle.pos.y = clamp(particle.pos.y, EPS, GRID_HEIGHT_PIXELS - EPS);
 
-	//particle.velocity.x *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.x - oldX)), 0, 1));
-	//particle.velocity.y *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.y - oldY)), 0, 1));
+	particle.velocity.x *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.x - oldX)), 0, 1));
+	particle.velocity.y *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.y - oldY)), 0, 1));
 
 	// float temperature = particle.temperature;
 	// float diffTemperature = temperature - BOUND_TEMPERATURE;
@@ -406,9 +436,12 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 	// exchange *= lerp(particle.GetThermalDiffusivity(), BOUND_THERMAL_DIFFUSIVITY, isBoundaryWarmerThanParticle);
 	// particle.SetTemperature(temperature - exchange * hasHitEdge);
 
-	if(output[particle.pos].a == 0){ // FIX THIS
-		bool isNo10 = id.x == 10;
-		output[particle.pos] = float4(particle.temperature, 0, isNo10, particle.isActive);// float4(particle.velocity.x * 1000, 0, particle.velocity.y * 1000, particle.isActive);// float4((particle.pos.x / GRID_WIDTH_PIXELS), 0, (particle.pos.y / GRID_HEIGHT_PIXELS), particle.isActive);// float4(0, 0.25, 0.75, particle.isActive);
-	} 
+
+	// if(output[particle.pos].a == 0){ // FIX THIS
+	float temp = particle.temperature / MAX_TEMPERATURE;
+	//output[particle.pos] = float4(temp, 0, 1 - temp, particle.isActive);// float4(particle.velocity.x * 1000, 0, particle.velocity.y * 1000, particle.isActive);// float4((particle.pos.x / GRID_WIDTH_PIXELS), 0, (particle.pos.y / GRID_HEIGHT_PIXELS), particle.isActive);// float4(0, 0.25, 0.75, particle.isActive);
+	output[particle.pos] = float4(particle.temperature, 1 - sign(id.x), 1- particle.temperature, particle.isActive);// float4(particle.velocity.x * 1000, 0, particle.velocity.y * 1000, particle.isActive);// float4((particle.pos.x / GRID_WIDTH_PIXELS), 0, (particle.pos.y / GRID_HEIGHT_PIXELS), particle.isActive);// float4(0, 0.25, 0.75, particle.isActive);
+
+	//} 
 	particles[id.x] = particle;
 }

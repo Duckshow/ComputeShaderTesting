@@ -15,20 +15,28 @@ public class ElementSimulator : MonoBehaviour {
 		public float RepelFactor;
 		public float IsActive; // every thread needs a particle, so some will get inactive particles instead
 		public uint ElementIndex;
+		public float Debug1;
+		public float Debug2;
+		public float Debug3;
+		public float Debug4;
+		public float Debug5;
 
 		public static int GetStride() {
-			return sizeof(float) * 12 + sizeof(uint) * 1; // must correspond to variables!
+			return sizeof(float) * 17 + sizeof(uint) * 1; // must correspond to variables!
 		}
 	}
 
 	private const int THREAD_COUNT_MAX = 1024;
 	private const int START_PARTICLE_COUNT = 64; // must be divisible by THREAD_COUNT_X!
-	private const int START_PARTICLE_COUNT_ACTIVE = 60;
+	private const int START_PARTICLE_COUNT_ACTIVE = 64; awpamdo// continue here. The total heat keeps dropping, but is it related to the amount of particles, the amount of threadgroups, or something else?
 
 	//#region[rgba(80, 0, 0, 1)] | WARNING: shared with ElementSimulator.compute! must be equal!
+	private const int OUTPUT_THREAD_COUNT_X = 32;
+	private const int OUTPUT_THREAD_COUNT_Y = 32; 
+	
 	private const int THREAD_COUNT_X = 64;
 	private const int PIXELS_PER_TILE_EDGE = 32;
-	private const int GRID_WIDTH_TILES = 2;
+	private const int GRID_WIDTH_TILES = 1;
 	private const int GRID_HEIGHT_TILES = 1;
 	private const int GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
 	private const int GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
@@ -39,9 +47,11 @@ public class ElementSimulator : MonoBehaviour {
 	//#endregion
 
 	// kernels
+	private const string KERNEL_CLEAROUTPUTTEXTURE = "ClearOutputTexture";
 	private const string KERNEL_COMPUTEDENSITYANDPRESSURE = "ComputeDensityAndPressure";
 	private const string KERNEL_COMPUTEFORCES = "ComputeForces";
 	private const string KERNEL_INTEGRATE = "Integrate";
+	private int kernelID_ClearOutputTexture;
 	private int kernelID_ComputeDensityAndPressure;
 	private int kernelID_ComputeForces;
 	private int kernelID_Integrate;
@@ -73,9 +83,14 @@ public class ElementSimulator : MonoBehaviour {
 	private ComputeShader shader;
 	[SerializeField]
 	private Material material;
+	[SerializeField]
+	private ParticleSystem particleSys;
+
+	private int debugIndex = -1;
 
 
 	void Awake(){
+		kernelID_ClearOutputTexture = shader.FindKernel(KERNEL_CLEAROUTPUTTEXTURE);
 		kernelID_ComputeDensityAndPressure = shader.FindKernel(KERNEL_COMPUTEDENSITYANDPRESSURE);
 		kernelID_ComputeForces = shader.FindKernel(KERNEL_COMPUTEFORCES);
 		kernelID_Integrate = shader.FindKernel(KERNEL_INTEGRATE);
@@ -93,6 +108,8 @@ public class ElementSimulator : MonoBehaviour {
 	
 	void Start () {
 		InitShader();
+		particleSys.Play();
+		particleSys.Emit(particles.Length);
 	}
 
 	void InitShader(){
@@ -121,12 +138,19 @@ public class ElementSimulator : MonoBehaviour {
 
 			float jitterX = Random.value * 10;
 			particle.Pos = new Vector2(x + jitterX, y);
-			particle.Temperature = Mathf.Round(Random.value);//0.0f;
+			particle.Temperature = Random.Range(0, 0);
+			particle.TemperatureStartFrame = particle.Temperature;
 			particle.ElementIndex = 0;
+			//particle.IsActive = i == 0 || i == 100 ? 1 : 0;
 			particle.IsActive = Mathf.Clamp01(Mathf.Sign(START_PARTICLE_COUNT_ACTIVE - (i + 1)));
 
 			particles[i] = particle;
 		}
+		while (debugIndex < 0 || particles[debugIndex].IsActive == 0){
+			debugIndex = Random.Range(0, particles.Length);
+		}
+		particles[debugIndex].Temperature = 1000;
+		particles[debugIndex].TemperatureStartFrame = 1000;
 		bufferParticles = new ComputeBuffer(particles.Length, Particle.GetStride());
 	}
 
@@ -137,6 +161,11 @@ public class ElementSimulator : MonoBehaviour {
 	}
 
 	void UpdateShader() {
+		int outputThreadGroupCountX = Mathf.CeilToInt(GRID_WIDTH_PIXELS / OUTPUT_THREAD_COUNT_X);
+		int outputThreadGroupCountY = Mathf.CeilToInt(GRID_HEIGHT_PIXELS / OUTPUT_THREAD_COUNT_Y);
+		shader.SetTexture(kernelID_ClearOutputTexture, shaderPropertyID_output, output);
+		shader.Dispatch(kernelID_ClearOutputTexture, outputThreadGroupCountX, outputThreadGroupCountY, 1);
+
 		int threadGroupCountX = Mathf.CeilToInt(particles.Length / THREAD_COUNT_X);
 
 		// ComputeDensityAndPressure
@@ -174,10 +203,43 @@ public class ElementSimulator : MonoBehaviour {
 		shader.Dispatch(kernelID_Integrate, threadGroupCountX, 1, 1);
 		bufferParticles.GetData(particles);
 
-		material.mainTexture = output;
+		//material.mainTexture = output;
 
 
-		Debug.Log(particles[10].Pos * 1000000000);
+		ParticleSystem.Particle[] unityParticles = new ParticleSystem.Particle[particles.Length];
+		int particleCount = particleSys.GetParticles(unityParticles);
+		for (int i = 0; i < unityParticles.Length; i++){
+			Particle particle = particles[i];
+			ParticleSystem.Particle unityParticle = unityParticles[i];
+
+			Vector2 worldPos = particle.Pos;
+			worldPos.x = worldPos.x / GRID_WIDTH_PIXELS * GRID_WIDTH_TILES;
+			worldPos.y = worldPos.y / GRID_HEIGHT_PIXELS * GRID_HEIGHT_TILES;
+			worldPos.x -= GRID_WIDTH_TILES * 0.5f;
+			worldPos.y -= GRID_HEIGHT_TILES * 0.5f;
+			unityParticle.position = worldPos;
+
+			Color color = Color.Lerp(Color.blue, Color.red, particle.Temperature / 1000.0f);
+			//color.a = 1 - Mathf.Abs(Mathf.Clamp(i - debugIndex, -1, 1));// particle.IsActive;
+			color.a = particle.IsActive;
+			unityParticle.startColor = color;
+
+			unityParticles[i] = unityParticle;
+		}
+		particleSys.SetParticles(unityParticles, particleCount);
+
+		float total = 0;
+		bool doPrintDebug = false;
+		for (int i = 0; i < particles.Length; i++){
+			Particle debugParticle = particles[i];
+			if(debugParticle.IsActive == 0) continue;
+			if (debugParticle.Debug2 > 0) { 
+				Debug.LogFormat(i + ": (temperatureOther){0} + (exchangeGive){1} = {2}, (temperature){3} - ((temperatureStartFrame){4} - (temperatureToGive){5}) = {6}", debugParticle.Debug1, debugParticle.Debug2, debugParticle.Debug1 + debugParticle.Debug2, debugParticle.Debug3, debugParticle.Debug4, debugParticle.Debug5, debugParticle.Debug3 - (debugParticle.Debug4 - debugParticle.Debug5));
+				doPrintDebug = true;
+			}
+			total += debugParticle.Temperature;
+		}
+		Debug.Log("Total: " + total);
 	}
 
 #region C# version of SPH
