@@ -1,11 +1,13 @@
-﻿#pragma kernel ClearOutputTexture
-#pragma kernel ComputeDensityAndPressure
+﻿#pragma kernel ResetTemporaryVariables
+#pragma kernel ClearOutputTexture
+#pragma kernel ComputeDensityHeatAndPressure
+#pragma kernel ApplyHeat
 #pragma kernel ComputeForces
 #pragma kernel Integrate
 
 
 // solver parameters
-static const float2 G = float2(600 * -9.8, 600 * -9.8); // external (gravitational) forces
+static const float2 G = float2(0, 300 * -9.8); // external (gravitational) forces
 static const float REST_DENS = 1000; // rest density
 static const float GAS_CONST = 2000; // const for equation of state
 static const float H = 0.5; // interaction radius
@@ -65,6 +67,8 @@ static const uint BIN_MAX_AMOUNT_OF_CONTENT = 64;
 static const uint BIN_CLUSTER_SIZE = 9;
 static const uint BIN_CLUSTER_CONTENT_MAX = BIN_CLUSTER_SIZE * BIN_MAX_AMOUNT_OF_CONTENT;
 
+static const uint PARTICLETEMPERATURES_Y_STARTFRAME = 0;
+static const uint PARTICLETEMPERATURES_Y_DELTA = 1;
 
 static const int ELEMENT_COUNT = 1;
 
@@ -137,11 +141,8 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 	float repelFactor;
 	half isActive; // every thread needs a particle, so some will get inactive particles instead
 	uint elementIndex;
-	float debug1;
-	float debug2;
-	float debug3;
-	float debug4;
-	float debug5;
+	// half4 particlesToHeat;
+	// half4 heatToGive;
 
 	float IsSolid() {
 		return step(temperature, GetFreezingPoint() + STATE_CORRECTION_OFFSET);
@@ -205,7 +206,11 @@ uint particleCount;
 
 RWTexture2D<float4> binLoads; // TODO: investigate registers further, to see how variables can be shared between dispatches
 RWTexture2DArray<float4> binContents;
+
+RWTexture2DArray<half3> particlesToHeat; admwapdw // continue here. Either keep trying to implement this... or add more variables to Particle. Not sure which is better.
 RWTexture2D<float4> output;
+
+// optimization: not accessing particles other than yourself could be worth looking into
 
 
 // void CorrectBinPosForQuadrants(inout uint2 pos, out uint4 gridQuadrant){
@@ -282,13 +287,22 @@ RWTexture2D<float4> output;
 // 	binContents[exactBinPos] = contents;
 // }
 
+
+[numthreads(THREAD_COUNT_X, 1, 1)]
+void ResetTemporaryVariables(uint3 id : SV_DispatchThreadID) {
+	Particle particle = particles[id.x];
+	// particle.particlesToHeat = uint4(0, 0, 0, 0);
+	// particle.heatToGive = half4(0.0, 0.0, 0.0, 0.0);
+	particles[id.x] = particle;
+}
+
 [numthreads(OUTPUT_THREAD_COUNT_X, OUTPUT_THREAD_COUNT_Y, 1)]
 void ClearOutputTexture(uint3 id : SV_DispatchThreadID) {
 	output[id.xy] = float4(0, 0, 0, 0);
 }
 
 [numthreads(THREAD_COUNT_X, 1, 1)]
-void ComputeDensityAndPressure(uint3 id : SV_DispatchThreadID) {
+void ComputeDensityHeatAndPressure(uint3 id : SV_DispatchThreadID) {
 	Particle particle = particles[id.x];
 
 	//	CacheParticleInBin(id.x);
@@ -296,11 +310,8 @@ void ComputeDensityAndPressure(uint3 id : SV_DispatchThreadID) {
 	// uint neighborIndices[BIN_CLUSTER_SIZE * BIN_MAX_AMOUNT_OF_CONTENT];
 	// uint neighborCount = GetNeighborParticleIndices(particle.pos, neighborIndices);
 
-	half density = 0.0;
-	half temperatureToGive = particle.temperature;
-
-	//uint i2 = 0, i = 1 - id.x;
-	for (uint i2 = 0, i = id.x; i2 < particleCount; i2++, i = (i + 1) % particleCount){
+	particle.density = ALMOST_BUT_NOT_QUITE_ZERO;
+	for (uint i = 0; i < particleCount; i++){
 		uint neighborIndex = i;// neighborIndices[i2];
 
 		Particle otherParticle = particles[neighborIndex];
@@ -309,37 +320,74 @@ void ComputeDensityAndPressure(uint3 id : SV_DispatchThreadID) {
 
 		half areBothParticlesActive = particle.isActive * otherParticle.isActive;
 		half shouldApplyDensity = areBothParticlesActive * step(r2, HSQ);
-		density += shouldApplyDensity * otherParticle.GetMass() * POLY6 * pow(HSQ - r2, 2.0);
+		particle.density += shouldApplyDensity * otherParticle.GetMass() * POLY6 * pow(HSQ - r2, 2.0);
 
 		half temperature = particle.temperature;
 		half temperatureOther = otherParticle.temperature;
 		half temperatureStartFrame = particle.temperatureStartFrame;
 		half temperatureStartFrameOther = otherParticle.temperatureStartFrame;
+		
 		half areParticlesDifferent = signAbs(id.x - i);
 		half isWithinRange = step(r2, HSQ_TEMPERATURE);
 		half isWarmerThanNeighbor = step(temperatureStartFrameOther, temperatureStartFrame);
 		half shouldApplyTemperature = isWarmerThanNeighbor * areParticlesDifferent * areBothParticlesActive * isWithinRange;
-		half exchangeGive = shouldApplyTemperature * (temperatureStartFrame - temperatureStartFrameOther) * particle.GetThermalDiffusivity(); // TODO: instead of using one Thermal Diffusivity, perhaps use the average of both?
-		exchangeGive = min(temperatureToGive, exchangeGive);
-		temperatureToGive -= exchangeGive;
 		
-		otherParticle.SetTemperature(temperatureOther + exchangeGive);
-		particles[neighborIndex] = otherParticle;
+		half thermalDiffusivity = (particle.GetThermalDiffusivity() + otherParticle.GetThermalDiffusivity()) * 0.5;
+		half exchangeGive = shouldApplyTemperature * (temperatureStartFrame - temperatureStartFrameOther) * thermalDiffusivity;
 		
-		if(otherParticle.isActive > 0 && areParticlesDifferent > 0){
-			particles[id.x].debug1 = temperatureOther;
-			particles[id.x].debug2 = exchangeGive;
-		}
+		uint4 particlesToHeat = particle.particlesToHeat;
+		half4 heatToGive = particle.heatToGive; 
+		half heatLeft = particle.temperature - (heatToGive.x + heatToGive.y + heatToGive.z + heatToGive.w); 
+		exchangeGive = min(heatLeft, exchangeGive);
+		
+		// X == highest, Z == lowest
+		half shouldOverwriteX = step(heatToGive.x, exchangeGive);
+		half shouldOverwriteY = step(heatToGive.y, exchangeGive) * (1 - shouldOverwriteX);
+		half shouldOverwriteZ = step(heatToGive.z, exchangeGive) * (1 - shouldOverwriteX) * (1 - shouldOverwriteY);
+		half shouldOverwriteW = step(heatToGive.w, exchangeGive) * (1 - shouldOverwriteX) * (1 - shouldOverwriteY) * (1 - shouldOverwriteZ);
+
+		particlesToHeat.x = lerp(particlesToHeat.x, neighborIndex, shouldOverwriteX);
+		particlesToHeat.y = lerp(particlesToHeat.y, neighborIndex, shouldOverwriteY);
+		particlesToHeat.z = lerp(particlesToHeat.z, neighborIndex, shouldOverwriteZ);
+		particlesToHeat.w = lerp(particlesToHeat.w, neighborIndex, shouldOverwriteW);
+		heatToGive.x = lerp(heatToGive.x, exchangeGive, shouldOverwriteX);
+		heatToGive.y = lerp(heatToGive.y, exchangeGive, shouldOverwriteY);
+		heatToGive.z = lerp(heatToGive.z, exchangeGive, shouldOverwriteZ);
+		heatToGive.w = lerp(heatToGive.w, exchangeGive, shouldOverwriteW);
+
+		particle.particlesToHeat = particlesToHeat;
+		particle.heatToGive = heatToGive;
 	}
 
-	particle = particles[id.x];
-	particle.debug3 = particle.temperature;
-	particle.debug4 = particle.temperatureStartFrame;
-	particle.debug5 = temperatureToGive;
-
-	particle.density = max(ALMOST_BUT_NOT_QUITE_ZERO, density);
-	particle.SetTemperature(particle.temperature - (particle.temperatureStartFrame - temperatureToGive));
 	particle.pressure = particle.isActive * GAS_CONST * (particle.density - REST_DENS);
+	particles[id.x] = particle;
+}
+
+[numthreads(THREAD_COUNT_X, 1, 1)]
+void ApplyHeat(uint3 id : SV_DispatchThreadID) {
+	Particle particle = particles[id.x];
+
+	half heat = particle.temperature;
+	half4 heatToGive = particle.heatToGive;
+	
+	for (uint i = 0; i < particleCount; i++){
+		uint neighborIndex = i;
+		Particle otherParticle = particles[neighborIndex];
+
+		uint4 othersParticlesToHeat = otherParticle.particlesToHeat;
+		half isParticleX = 1 - signAbs(othersParticlesToHeat.x - id.x);
+		half isParticleY = 1 - signAbs(othersParticlesToHeat.y - id.x);
+		half isParticleZ = 1 - signAbs(othersParticlesToHeat.z - id.x);
+		half isParticleW = 1 - signAbs(othersParticlesToHeat.w - id.x);
+
+		half4 othersHeatToGive = otherParticle.heatToGive; 
+		heat += othersHeatToGive.x * isParticleX;
+		heat += othersHeatToGive.y * isParticleY;
+		heat += othersHeatToGive.z * isParticleZ;
+		heat += othersHeatToGive.w * isParticleW;
+	}
+
+	particle.SetTemperature(heat - (heatToGive.x + heatToGive.y + heatToGive.z + heatToGive.w));
 	particles[id.x] = particle;
 }
 

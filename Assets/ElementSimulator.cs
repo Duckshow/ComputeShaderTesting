@@ -15,20 +15,17 @@ public class ElementSimulator : MonoBehaviour {
 		public float RepelFactor;
 		public float IsActive; // every thread needs a particle, so some will get inactive particles instead
 		public uint ElementIndex;
-		public float Debug1;
-		public float Debug2;
-		public float Debug3;
-		public float Debug4;
-		public float Debug5;
+		// public Color ParticlesToHeat;
+		// public Color HeatToGive;
 
 		public static int GetStride() {
-			return sizeof(float) * 17 + sizeof(uint) * 1; // must correspond to variables!
+			return sizeof(float) * 12 + sizeof(uint) * 1; // must correspond to variables!
 		}
 	}
 
 	private const int THREAD_COUNT_MAX = 1024;
-	private const int START_PARTICLE_COUNT = 64; // must be divisible by THREAD_COUNT_X!
-	private const int START_PARTICLE_COUNT_ACTIVE = 64; awpamdo// continue here. The total heat keeps dropping, but is it related to the amount of particles, the amount of threadgroups, or something else?
+	private const int START_PARTICLE_COUNT = 1024; // must be divisible by THREAD_COUNT_X!
+	private const int START_PARTICLE_COUNT_ACTIVE = 1024;
 
 	//#region[rgba(80, 0, 0, 1)] | WARNING: shared with ElementSimulator.compute! must be equal!
 	private const int OUTPUT_THREAD_COUNT_X = 32;
@@ -47,12 +44,16 @@ public class ElementSimulator : MonoBehaviour {
 	//#endregion
 
 	// kernels
+	private const string KERNEL_RESETTEMPORARYVARIABLES = "ResetTemporaryVariables";
 	private const string KERNEL_CLEAROUTPUTTEXTURE = "ClearOutputTexture";
-	private const string KERNEL_COMPUTEDENSITYANDPRESSURE = "ComputeDensityAndPressure";
+	private const string KERNEL_COMPUTEDENSITYHEATANDPRESSURE = "ComputeDensityHeatAndPressure";
+	private const string KERNEL_APPLYHEAT = "ApplyHeat";
 	private const string KERNEL_COMPUTEFORCES = "ComputeForces";
 	private const string KERNEL_INTEGRATE = "Integrate";
+	private int kernelID_ResetTemporaryVariables;
 	private int kernelID_ClearOutputTexture;
-	private int kernelID_ComputeDensityAndPressure;
+	private int kernelID_ComputeDensityHeatAndPressure;
+	private int kernelID_ApplyHeat;
 	private int kernelID_ComputeForces;
 	private int kernelID_Integrate;
 
@@ -76,6 +77,8 @@ public class ElementSimulator : MonoBehaviour {
 	private Texture2D binLoads;
 	private Texture2DArray binContents;
 
+	private RenderTexture particlesToHeat;
+
 	private RenderTexture output;
 	private Vector2[] uvs;
 
@@ -90,8 +93,10 @@ public class ElementSimulator : MonoBehaviour {
 
 
 	void Awake(){
+		kernelID_ResetTemporaryVariables = shader.FindKernel(KERNEL_RESETTEMPORARYVARIABLES);
 		kernelID_ClearOutputTexture = shader.FindKernel(KERNEL_CLEAROUTPUTTEXTURE);
-		kernelID_ComputeDensityAndPressure = shader.FindKernel(KERNEL_COMPUTEDENSITYANDPRESSURE);
+		kernelID_ComputeDensityHeatAndPressure = shader.FindKernel(KERNEL_COMPUTEDENSITYHEATANDPRESSURE);
+		kernelID_ApplyHeat = shader.FindKernel(KERNEL_APPLYHEAT);
 		kernelID_ComputeForces = shader.FindKernel(KERNEL_COMPUTEFORCES);
 		kernelID_Integrate = shader.FindKernel(KERNEL_INTEGRATE);
 
@@ -120,10 +125,17 @@ public class ElementSimulator : MonoBehaviour {
 		output.filterMode = FilterMode.Point;
 		output.Create();
 
-		binLoads = new Texture2D(BIN_COUNT_X, BIN_COUNT_Y, TextureFormat.RGBA32, mipmap: false);
-		binContents = new Texture2DArray(BIN_COUNT_X, BIN_COUNT_Y, BIN_MAX_AMOUNT_OF_CONTENT, TextureFormat.RGBA32, mipmap: false);
 
 		particles = new Particle[START_PARTICLE_COUNT];
+		binLoads = new Texture2D(BIN_COUNT_X, BIN_COUNT_Y, TextureFormat.RGBA32, mipmap: false);
+		binContents = new Texture2DArray(BIN_COUNT_X, BIN_COUNT_Y, BIN_MAX_AMOUNT_OF_CONTENT, TextureFormat.RGBA32, mipmap: false);
+		
+		particlesToHeat = new RenderTexture(particles.Length, 2, 24, RenderTextureFormat.RFloat);
+		particlesToHeat.volumeDepth = 32;
+		particlesToHeat.enableRandomWrite = true;
+		particlesToHeat.filterMode = FilterMode.Point;
+		particlesToHeat.Create();
+
 		int x = 0, y = 0;
 		for (int i = 0; i < particles.Length; i++){
 			if (i > 0){
@@ -138,8 +150,7 @@ public class ElementSimulator : MonoBehaviour {
 
 			float jitterX = Random.value * 10;
 			particle.Pos = new Vector2(x + jitterX, y);
-			particle.Temperature = Random.Range(0, 0);
-			particle.TemperatureStartFrame = particle.Temperature;
+			particle.Temperature = Random.Range(0, 1000);
 			particle.ElementIndex = 0;
 			//particle.IsActive = i == 0 || i == 100 ? 1 : 0;
 			particle.IsActive = Mathf.Clamp01(Mathf.Sign(START_PARTICLE_COUNT_ACTIVE - (i + 1)));
@@ -150,7 +161,6 @@ public class ElementSimulator : MonoBehaviour {
 			debugIndex = Random.Range(0, particles.Length);
 		}
 		particles[debugIndex].Temperature = 1000;
-		particles[debugIndex].TemperatureStartFrame = 1000;
 		bufferParticles = new ComputeBuffer(particles.Length, Particle.GetStride());
 	}
 
@@ -161,22 +171,38 @@ public class ElementSimulator : MonoBehaviour {
 	}
 
 	void UpdateShader() {
+		int threadGroupCountX = Mathf.CeilToInt(particles.Length / THREAD_COUNT_X);
+
+		// ResetTemporaryVariables
+		bufferParticles.SetData(particles);
+		shader.SetBuffer(kernelID_ResetTemporaryVariables, shaderPropertyID_particles, bufferParticles);
+		shader.SetInt(shaderPropertyID_particleCount, particles.Length);
+		shader.Dispatch(kernelID_ResetTemporaryVariables, threadGroupCountX, 1, 1);
+		bufferParticles.GetData(particles);
+
 		int outputThreadGroupCountX = Mathf.CeilToInt(GRID_WIDTH_PIXELS / OUTPUT_THREAD_COUNT_X);
 		int outputThreadGroupCountY = Mathf.CeilToInt(GRID_HEIGHT_PIXELS / OUTPUT_THREAD_COUNT_Y);
 		shader.SetTexture(kernelID_ClearOutputTexture, shaderPropertyID_output, output);
 		shader.Dispatch(kernelID_ClearOutputTexture, outputThreadGroupCountX, outputThreadGroupCountY, 1);
 
-		int threadGroupCountX = Mathf.CeilToInt(particles.Length / THREAD_COUNT_X);
-
 		// ComputeDensityAndPressure
 		bufferParticles.SetData(particles);
-		shader.SetBuffer(kernelID_ComputeDensityAndPressure, shaderPropertyID_particles, bufferParticles);
+		shader.SetBuffer(kernelID_ComputeDensityHeatAndPressure, shaderPropertyID_particles, bufferParticles);
 		shader.SetInt(shaderPropertyID_particleCount, particles.Length);
 		// NOTE: bintextures may have to be rendertextures in order to write...
-		shader.SetTexture(kernelID_ComputeDensityAndPressure, shaderPropertyID_binLoads, binLoads); 
-		shader.SetTexture(kernelID_ComputeDensityAndPressure, shaderPropertyID_binContents, binContents);
+		shader.SetTexture(kernelID_ComputeDensityHeatAndPressure, shaderPropertyID_binLoads, binLoads); 
+		shader.SetTexture(kernelID_ComputeDensityHeatAndPressure, shaderPropertyID_binContents, binContents);
 
-		shader.Dispatch(kernelID_ComputeDensityAndPressure, threadGroupCountX, 1, 1);
+		shader.SetTexture();
+
+		shader.Dispatch(kernelID_ComputeDensityHeatAndPressure, threadGroupCountX, 1, 1);
+		bufferParticles.GetData(particles);
+
+		// ApplyHeat
+		bufferParticles.SetData(particles);
+		shader.SetBuffer(kernelID_ApplyHeat, shaderPropertyID_particles, bufferParticles);
+		shader.SetInt(shaderPropertyID_particleCount, particles.Length);
+		shader.Dispatch(kernelID_ApplyHeat, threadGroupCountX, 1, 1);
 		bufferParticles.GetData(particles);
 
 		// ComputeForces
@@ -230,16 +256,23 @@ public class ElementSimulator : MonoBehaviour {
 
 		float total = 0;
 		bool doPrintDebug = false;
+		float highest = -10000;
+		float highestIndex = -1;
 		for (int i = 0; i < particles.Length; i++){
 			Particle debugParticle = particles[i];
 			if(debugParticle.IsActive == 0) continue;
+			if (debugParticle.Temperature > highest){
+				highest = debugParticle.Temperature;
+				highestIndex = i;
+			}
+			//Debug.Log(i + ": " + debugParticle.Temperature);
 			if (debugParticle.Debug2 > 0) { 
 				Debug.LogFormat(i + ": (temperatureOther){0} + (exchangeGive){1} = {2}, (temperature){3} - ((temperatureStartFrame){4} - (temperatureToGive){5}) = {6}", debugParticle.Debug1, debugParticle.Debug2, debugParticle.Debug1 + debugParticle.Debug2, debugParticle.Debug3, debugParticle.Debug4, debugParticle.Debug5, debugParticle.Debug3 - (debugParticle.Debug4 - debugParticle.Debug5));
 				doPrintDebug = true;
 			}
 			total += debugParticle.Temperature;
 		}
-		Debug.Log("Total: " + total);
+		Debug.Log("Total: " + total + " (" + highestIndex + ": " + highest + ")");
 	}
 
 #region C# version of SPH
