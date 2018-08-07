@@ -1,4 +1,5 @@
-﻿#pragma kernel ResetTemporaryVariables
+﻿#pragma kernel Init
+#pragma kernel ResetTemporaryVariables
 #pragma kernel ClearOutputTexture
 #pragma kernel ComputeDensityHeatAndPressure
 #pragma kernel ApplyHeat
@@ -8,15 +9,15 @@
 
 // solver parameters
 static const float2 G = float2(0, 300 * -9.8); // external (gravitational) forces
-static const float REST_DENS = 1000; // rest density
+static const float REST_DENS = 1000; // rest density (basically repel, but slightly different)
 static const float GAS_CONST = 2000; // const for equation of state
-static const float H = 0.5; // interaction radius
+static const float H = 0.75; // interaction radius
 static const float HSQ = H * H; // radius^2 for optimization
-static const float HSQ_TEMPERATURE = HSQ * 2.0; // interaction radius
+static const float HSQ_TEMPERATURE = HSQ * 4.0; // interaction radius
 static const float H_SURFACE_TENSION = H * 3.0; // interaction radius
 static const float MASS = 2.0; // assume all particles have the same mass
 static const float VISC = 250.0; // viscosity constant
-static const float DT = 0.0008;// 0.0008; // integration timestep
+static const float DT = 0.001;// 0.0008; // integration timestep
 static const float DENSITY_OFFSET = 0.925; // make SPIKY_GRAD apply force earlier (particles don't have to be as close)
 static const float VISC_OFFSET = 0.925; // make VISC_LAP apply force earlier (particles don't have to be as close)
 static const float PI = 3.14159265359;
@@ -28,14 +29,10 @@ static const float VISC_LAP = 45.0 / (PI * pow(H * VISC_OFFSET, 6.0));
 // simulation parameters
 static const float EPS = H; // boundary epsilon
 static const float BOUND_DAMPING = -0.5;
-static const int DAM_PARTICLES_L = 100;
-static const int DAM_PARTICLES_R = 100;
-static const int MAX_PARTICLES = 2000;
 
-static const float MIN_TIME_BETWEEN_PARTICLE_SPAWN = 0.1;
 static const float MAX_TEMPERATURE = 1000.0;
 
-static const float THERMAL_DIFFUSIVITY = 0.5;
+static const float THERMAL_DIFFUSIVITY = 0.25;
 static const float REPEL_STRENGTH_MIN = 1.0;
 static const float REPEL_STRENGTH_MAX = 8.0;
 static const float REPEL_FACTOR_MIN = 1.0 / REPEL_STRENGTH_MAX;
@@ -54,8 +51,8 @@ static const int OUTPUT_THREAD_COUNT_Y = 32;
 
 static const int THREAD_COUNT_X = 64;
 static const uint PIXELS_PER_TILE_EDGE = 32;
-static const uint GRID_WIDTH_TILES = 1;
-static const uint GRID_HEIGHT_TILES = 1;
+static const uint GRID_WIDTH_TILES = 10;
+static const uint GRID_HEIGHT_TILES = 10;
 static const uint GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
 static const uint GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
 static const uint BIN_WIDTH = 1;
@@ -66,9 +63,6 @@ static const uint BIN_MAX_AMOUNT_OF_CONTENT = 64;
 
 static const uint BIN_CLUSTER_SIZE = 9;
 static const uint BIN_CLUSTER_CONTENT_MAX = BIN_CLUSTER_SIZE * BIN_MAX_AMOUNT_OF_CONTENT;
-
-static const uint PARTICLETEMPERATURES_Y_STARTFRAME = 0;
-static const uint PARTICLETEMPERATURES_Y_DELTA = 1;
 
 static const int ELEMENT_COUNT = 1;
 
@@ -141,24 +135,18 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 	float repelFactor;
 	half isActive; // every thread needs a particle, so some will get inactive particles instead
 	uint elementIndex;
-	// half4 particlesToHeat;
-	// half4 heatToGive;
-
-	float IsSolid() {
-		return step(temperature, GetFreezingPoint() + STATE_CORRECTION_OFFSET);
-	}
-
-	float IsLiquid() {
-		return step(temperature, GetBoilingPoint() - STATE_CORRECTION_OFFSET) - IsSolid();
-	}
-
-	float IsGas() {
-		return step(temperature, GetBoilingPoint() + STATE_CORRECTION_OFFSET);
-	}
-
-	float GetThermalDiffusivity() {
-		return 0.7;//THERMAL_DIFFUSIVITY * ((IsSolid() * GetThermalDiffusivitySolid()) + (IsLiquid() * GetThermalDiffusivityLiquid()) + (IsGas() * GetThermalDiffusivityGas()));
-	}
+	half4 particlesToHeat;
+	half4 heatToGive;
+	half debugTemp;
+	half debugThermal;
+	half debug1;
+	half debug2;
+	half debug3;
+	half debug4;
+	half debug5;
+	half debug6;
+	half debug7;
+	half debug8;
 
 	float GetMass()						{ return Mass[elementIndex]; }
 	float GetViscosity()				{ return Viscosity[elementIndex]; }
@@ -167,10 +155,29 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 	float GetRepelStrengthSolid()		{ return RepelStrengthSolid[elementIndex]; }
 	float GetRepelStrengthLiquid()		{ return RepelStrengthLiquid[elementIndex]; }
 	float GetRepelStrengthGas()			{ return RepelStrengthGas[elementIndex]; }
-	float GetRepelStrengthCurrent()		{ return IsSolid() * GetRepelStrengthSolid() + IsLiquid() * GetRepelStrengthLiquid() + IsGas() * GetRepelStrengthGas(); }
 	float GetThermalDiffusivitySolid()	{ return ThermalDiffusivitySolid[elementIndex]; }
 	float GetThermalDiffusivityLiquid()	{ return ThermalDiffusivityLiquid[elementIndex]; }
 	float GetThermalDiffusivityGas()	{ return ThermalDiffusivityGas[elementIndex]; }
+	
+	float IsSolid() {
+		return step(temperatureStartFrame, GetFreezingPoint() + STATE_CORRECTION_OFFSET);
+	}
+
+	float IsLiquid() {
+		return step(temperatureStartFrame, GetBoilingPoint() - STATE_CORRECTION_OFFSET) - IsSolid();
+	}
+
+	float IsGas() {
+		return step(GetBoilingPoint() - STATE_CORRECTION_OFFSET, temperatureStartFrame);
+	}
+
+	float GetThermalDiffusivity() {
+		return THERMAL_DIFFUSIVITY * ((IsSolid() * GetThermalDiffusivitySolid()) + (IsLiquid() * GetThermalDiffusivityLiquid()) + (IsGas() * GetThermalDiffusivityGas()));
+	}
+
+	float GetRepelStrengthCurrent()	{ 
+		return IsSolid() * GetRepelStrengthSolid() + IsLiquid() * GetRepelStrengthLiquid() + IsGas() * GetRepelStrengthGas(); 
+	}
 
 	void SetTemperature(float temp){
 		temperature = temp;// clamp(temp, 0.0, MAX_TEMPERATURE);
@@ -207,7 +214,6 @@ uint particleCount;
 RWTexture2D<float4> binLoads; // TODO: investigate registers further, to see how variables can be shared between dispatches
 RWTexture2DArray<float4> binContents;
 
-RWTexture2DArray<half3> particlesToHeat; admwapdw // continue here. Either keep trying to implement this... or add more variables to Particle. Not sure which is better.
 RWTexture2D<float4> output;
 
 // optimization: not accessing particles other than yourself could be worth looking into
@@ -287,12 +293,18 @@ RWTexture2D<float4> output;
 // 	binContents[exactBinPos] = contents;
 // }
 
+[numthreads(THREAD_COUNT_X, 1, 1)]
+void Init(uint3 id : SV_DispatchThreadID) {
+	Particle particle = particles[id.x];
+	particle.SetTemperature(particle.temperatureStartFrame);
+	particles[id.x] = particle;
+}
 
 [numthreads(THREAD_COUNT_X, 1, 1)]
 void ResetTemporaryVariables(uint3 id : SV_DispatchThreadID) {
 	Particle particle = particles[id.x];
-	// particle.particlesToHeat = uint4(0, 0, 0, 0);
-	// particle.heatToGive = half4(0.0, 0.0, 0.0, 0.0);
+	particle.particlesToHeat = half4(0, 0, 0, 0);
+	particle.heatToGive = half4(0.0, 0.0, 0.0, 0.0);
 	particles[id.x] = particle;
 }
 
@@ -311,8 +323,11 @@ void ComputeDensityHeatAndPressure(uint3 id : SV_DispatchThreadID) {
 	// uint neighborCount = GetNeighborParticleIndices(particle.pos, neighborIndices);
 
 	particle.density = ALMOST_BUT_NOT_QUITE_ZERO;
+	uint pIndex = id.x;
 	for (uint i = 0; i < particleCount; i++){
-		uint neighborIndex = i;// neighborIndices[i2];
+		pIndex = (i + 1) % particleCount;
+
+		uint neighborIndex = pIndex;// neighborIndices[i2];
 
 		Particle otherParticle = particles[neighborIndex];
 		float2 dir = otherParticle.pos - particle.pos;
@@ -322,42 +337,107 @@ void ComputeDensityHeatAndPressure(uint3 id : SV_DispatchThreadID) {
 		half shouldApplyDensity = areBothParticlesActive * step(r2, HSQ);
 		particle.density += shouldApplyDensity * otherParticle.GetMass() * POLY6 * pow(HSQ - r2, 2.0);
 
-		half temperature = particle.temperature;
-		half temperatureOther = otherParticle.temperature;
 		half temperatureStartFrame = particle.temperatureStartFrame;
 		half temperatureStartFrameOther = otherParticle.temperatureStartFrame;
 		
-		half areParticlesDifferent = signAbs(id.x - i);
+		half areParticlesDifferent = signAbs(id.x - neighborIndex);
 		half isWithinRange = step(r2, HSQ_TEMPERATURE);
 		half isWarmerThanNeighbor = step(temperatureStartFrameOther, temperatureStartFrame);
-		half shouldApplyTemperature = isWarmerThanNeighbor * areParticlesDifferent * areBothParticlesActive * isWithinRange;
-		
+		half isNeighborBelowMaxHeat = step(otherParticle.temperatureStartFrame, MAX_TEMPERATURE);
+		half shouldApplyTemperature = isWarmerThanNeighbor * areParticlesDifferent * areBothParticlesActive * isWithinRange * isNeighborBelowMaxHeat;
+
+
 		half thermalDiffusivity = (particle.GetThermalDiffusivity() + otherParticle.GetThermalDiffusivity()) * 0.5;
 		half exchangeGive = shouldApplyTemperature * (temperatureStartFrame - temperatureStartFrameOther) * thermalDiffusivity;
-		
-		uint4 particlesToHeat = particle.particlesToHeat;
-		half4 heatToGive = particle.heatToGive; 
-		half heatLeft = particle.temperature - (heatToGive.x + heatToGive.y + heatToGive.z + heatToGive.w); 
-		exchangeGive = min(heatLeft, exchangeGive);
-		
-		// X == highest, Z == lowest
-		half shouldOverwriteX = step(heatToGive.x, exchangeGive);
-		half shouldOverwriteY = step(heatToGive.y, exchangeGive) * (1 - shouldOverwriteX);
-		half shouldOverwriteZ = step(heatToGive.z, exchangeGive) * (1 - shouldOverwriteX) * (1 - shouldOverwriteY);
-		half shouldOverwriteW = step(heatToGive.w, exchangeGive) * (1 - shouldOverwriteX) * (1 - shouldOverwriteY) * (1 - shouldOverwriteZ);
 
-		particlesToHeat.x = lerp(particlesToHeat.x, neighborIndex, shouldOverwriteX);
-		particlesToHeat.y = lerp(particlesToHeat.y, neighborIndex, shouldOverwriteY);
-		particlesToHeat.z = lerp(particlesToHeat.z, neighborIndex, shouldOverwriteZ);
-		particlesToHeat.w = lerp(particlesToHeat.w, neighborIndex, shouldOverwriteW);
-		heatToGive.x = lerp(heatToGive.x, exchangeGive, shouldOverwriteX);
-		heatToGive.y = lerp(heatToGive.y, exchangeGive, shouldOverwriteY);
-		heatToGive.z = lerp(heatToGive.z, exchangeGive, shouldOverwriteZ);
-		heatToGive.w = lerp(heatToGive.w, exchangeGive, shouldOverwriteW);
+		// half cachedTemperature = temperatures.Load(cachedTempIndex);
+		// exchangeGive = min(exchangeGive, MAX_TEMPERATURE - cachedTemperature);
+
+		half4 particlesToHeat = particle.particlesToHeat;
+		half4 heatToGive = particle.heatToGive; 
+
+		half isGreaterThanW = sign01(exchangeGive - heatToGive.w) * shouldApplyTemperature;
+		heatToGive.x = lerp(heatToGive.x, heatToGive.y, isGreaterThanW);
+		heatToGive.y = lerp(heatToGive.y, heatToGive.z, isGreaterThanW);
+		heatToGive.z = lerp(heatToGive.z, heatToGive.w, isGreaterThanW);
+		heatToGive.w = lerp(heatToGive.w, exchangeGive, isGreaterThanW);
+		particlesToHeat.x = lerp(particlesToHeat.x, particlesToHeat.y, isGreaterThanW);
+		particlesToHeat.y = lerp(particlesToHeat.y, particlesToHeat.z, isGreaterThanW);
+		particlesToHeat.z = lerp(particlesToHeat.z, particlesToHeat.w, isGreaterThanW);
+		particlesToHeat.w = lerp(particlesToHeat.w, neighborIndex, isGreaterThanW);
+
+		half isGreaterThanZ = sign01(exchangeGive - heatToGive.z) * (1 - isGreaterThanW) * shouldApplyTemperature;
+		heatToGive.x = lerp(heatToGive.x, heatToGive.y, isGreaterThanZ);
+		heatToGive.y = lerp(heatToGive.y, heatToGive.z, isGreaterThanZ);
+		heatToGive.z = lerp(heatToGive.z, exchangeGive, isGreaterThanZ);
+		particlesToHeat.x = lerp(particlesToHeat.x, particlesToHeat.y, isGreaterThanZ);
+		particlesToHeat.y = lerp(particlesToHeat.y, particlesToHeat.z, isGreaterThanZ);
+		particlesToHeat.z = lerp(particlesToHeat.z, neighborIndex, isGreaterThanZ);
+
+		half isGreaterThanY = sign01(exchangeGive - heatToGive.y) * (1 - isGreaterThanW) * (1 - isGreaterThanZ) * shouldApplyTemperature;
+		heatToGive.x = lerp(heatToGive.x, heatToGive.y, isGreaterThanY);
+		heatToGive.y = lerp(heatToGive.y, exchangeGive, isGreaterThanY);
+		particlesToHeat.x = lerp(particlesToHeat.x, particlesToHeat.y, isGreaterThanY);
+		particlesToHeat.y = lerp(particlesToHeat.y, neighborIndex, isGreaterThanY);
+		
+		half isGreaterThanX = sign01(exchangeGive - heatToGive.x) * (1 - isGreaterThanW) * (1 - isGreaterThanZ) * (1 - isGreaterThanY) * shouldApplyTemperature;
+		heatToGive.x = lerp(heatToGive.x, exchangeGive, isGreaterThanX);
+		particlesToHeat.x = lerp(particlesToHeat.x, neighborIndex, isGreaterThanX);
+
+
+		// half isLowestHeatX = (1 - min(1, max(0, heatToGive.x - heatToGive.y) + max(0, heatToGive.x - heatToGive.z) + max(0, heatToGive.x - heatToGive.w)));
+		// half isLowestHeatY = (1 - min(1, max(0, heatToGive.y - heatToGive.x) + max(0, heatToGive.y - heatToGive.z) + max(0, heatToGive.y - heatToGive.w))) * (1 - isLowestHeatX);
+		// half isLowestHeatZ = (1 - min(1, max(0, heatToGive.z - heatToGive.x) + max(0, heatToGive.z - heatToGive.y) + max(0, heatToGive.z - heatToGive.w))) * (1 - isLowestHeatX) * (1 - isLowestHeatY);
+		// half isLowestHeatW = (1 - min(1, max(0, heatToGive.w - heatToGive.x) + max(0, heatToGive.w - heatToGive.y) + max(0, heatToGive.w - heatToGive.z))) * (1 - isLowestHeatX) * (1 - isLowestHeatY) * (1 - isLowestHeatZ);
+		// half lowestCachedHeat = heatToGive.x * isLowestHeatX + heatToGive.y * isLowestHeatY + heatToGive.z * isLowestHeatZ + heatToGive.w * isLowestHeatW;
+		
+		// half shouldOverwrite = step(lowestCachedHeat, exchangeGive);
+		// half shouldOverwriteX = shouldOverwrite * isLowestHeatX;
+		// half shouldOverwriteY = shouldOverwrite * isLowestHeatY;
+		// half shouldOverwriteZ = shouldOverwrite * isLowestHeatZ;
+		// half shouldOverwriteW = shouldOverwrite * isLowestHeatW;
+
+
+		// particlesToHeat.x = lerp(particlesToHeat.x, neighborIndex, shouldOverwriteX);
+		// particlesToHeat.y = lerp(particlesToHeat.y, neighborIndex, shouldOverwriteY);
+		// particlesToHeat.z = lerp(particlesToHeat.z, neighborIndex, shouldOverwriteZ);
+		// particlesToHeat.w = lerp(particlesToHeat.w, neighborIndex, shouldOverwriteW);
+		
+		// heatToGive.x = lerp(heatToGive.x, exchangeGive, shouldOverwriteX);
+		// heatToGive.y = lerp(heatToGive.y, exchangeGive, shouldOverwriteY);
+		// heatToGive.z = lerp(heatToGive.z, exchangeGive, shouldOverwriteZ);
+		// heatToGive.w = lerp(heatToGive.w, exchangeGive, shouldOverwriteW);
 
 		particle.particlesToHeat = particlesToHeat;
 		particle.heatToGive = heatToGive;
+
+		// AllMemoryBarrier();
+		// temperatures[cachedTempIndex] = cachedTemperature + exchangeGive;
 	}
+
+	// clamp components
+	half4 heatToGive = particle.heatToGive;
+	half heat = particle.temperatureStartFrame;
+
+	particle.debugTemp = particle.temperatureStartFrame;
+	particle.debugThermal = particle.GetThermalDiffusivity();
+	particle.debug1 = particle.heatToGive.x;
+	particle.debug2 = particle.heatToGive.y;
+	particle.debug3 = particle.heatToGive.z;
+	particle.debug4 = particle.heatToGive.w;
+	particle.debug5 = particle.particlesToHeat.x;
+	particle.debug6 = particle.particlesToHeat.y;
+	particle.debug7 = particle.particlesToHeat.z;
+	particle.debug8 = particle.particlesToHeat.w;
+
+	
+
+	heatToGive.x = min(heatToGive.x, heat);
+	heatToGive.y = min(heatToGive.y, heat - heatToGive.x);
+	heatToGive.z = min(heatToGive.z, heat - (heatToGive.x + heatToGive.y));
+	heatToGive.w = min(heatToGive.w, heat - (heatToGive.x + heatToGive.y + heatToGive.z));
+	particle.heatToGive = heatToGive;
+
 
 	particle.pressure = particle.isActive * GAS_CONST * (particle.density - REST_DENS);
 	particles[id.x] = particle;
@@ -367,9 +447,7 @@ void ComputeDensityHeatAndPressure(uint3 id : SV_DispatchThreadID) {
 void ApplyHeat(uint3 id : SV_DispatchThreadID) {
 	Particle particle = particles[id.x];
 
-	half heat = particle.temperature;
-	half4 heatToGive = particle.heatToGive;
-	
+	half heat = particle.temperatureStartFrame;
 	for (uint i = 0; i < particleCount; i++){
 		uint neighborIndex = i;
 		Particle otherParticle = particles[neighborIndex];
@@ -387,6 +465,25 @@ void ApplyHeat(uint3 id : SV_DispatchThreadID) {
 		heat += othersHeatToGive.w * isParticleW;
 	}
 
+	// if(particle.particlesToHeat.x == 1){
+	// 	particle.debug1 = particle.heatToGive.x;
+	// 	particle.debug5 = particle.particlesToHeat.x;
+	// }
+	// if(particle.particlesToHeat.y == 1){
+	// 	particle.debug2 = particle.heatToGive.y;
+	// 	particle.debug6 = particle.particlesToHeat.y;
+	// }
+	// if(particle.particlesToHeat.z == 1){
+	// 	particle.debug3 = particle.heatToGive.z;
+	// 	particle.debug7 = particle.particlesToHeat.z;
+	// }
+	// if(particle.particlesToHeat.w == 1){
+	// 	particle.debug4 = particle.heatToGive.w;
+	// 	particle.debug8 = particle.particlesToHeat.w;
+	// }
+
+
+	half4 heatToGive = particle.heatToGive;
 	particle.SetTemperature(heat - (heatToGive.x + heatToGive.y + heatToGive.z + heatToGive.w));
 	particles[id.x] = particle;
 }
@@ -430,7 +527,6 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 	float2 fgrav = G * particle.density;
 	particle.force = particle.isActive * (fpress + fvisc + fgrav + fsurftens);
 
-	particle.temperatureStartFrame = particle.temperature; // for next frame
 	particles[id.x] = particle;
 }
 
@@ -491,5 +587,7 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 	output[particle.pos] = float4(particle.temperature, 1 - sign(id.x), 1- particle.temperature, particle.isActive);// float4(particle.velocity.x * 1000, 0, particle.velocity.y * 1000, particle.isActive);// float4((particle.pos.x / GRID_WIDTH_PIXELS), 0, (particle.pos.y / GRID_HEIGHT_PIXELS), particle.isActive);// float4(0, 0.25, 0.75, particle.isActive);
 
 	//} 
+
+	particle.temperatureStartFrame = particle.temperature; // for next frame
 	particles[id.x] = particle;
 }
