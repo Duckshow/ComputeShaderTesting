@@ -1,25 +1,22 @@
-﻿#pragma kernel DebugBins
-#pragma kernel Init
-#pragma kernel ClearBins
+﻿#pragma kernel Init
 #pragma kernel ClearOutputTexture
 #pragma kernel CacheParticlesInBins
-#pragma kernel ResetTemporaryVariables
-#pragma kernel SortParticles
-#pragma kernel FinishSortParticles
-#pragma kernel ComputeDensityHeatAndPressure
+#pragma kernel ComputeDensity
+#pragma kernel ComputePressure
+#pragma kernel ComputeHeat
 #pragma kernel ApplyHeat
 #pragma kernel ComputeForces
 #pragma kernel Integrate
 
 // solver parameters
 static const float2 G = float2(0, 300 * -9.8); // external (gravitational) forces
-static const float REST_DENS = 1000;// 1000; // rest density (basically repel, but slightly different)
-static const float GAS_CONST = 2000; // const for equation of state
+static const float REST_DENS = 250;// 1000; // rest density (basically repel, but slightly different)
+static const float GAS_CONST = 500; // const for equation of state
 static const float H = 1.0; // interaction radius
 static const float HSQ = H * H; // radius^2 for optimization
 static const float HSQ_TEMPERATURE = HSQ * 12.0; // interaction radius
-static const float H_SURFACE_TENSION = H * 3.0; // interaction radius
-static const float MASS = 20.0; // assume all particles have the same mass
+static const float H_SURFACE_TENSION = H * 12.0; // interaction radius
+static const float MASS = 2.0; // assume all particles have the same mass
 static const float VISC = 25.0; // viscosity constant
 static const float DT = 0.001;// 0.0008; // integration timestep
 static const float DENSITY_OFFSET = 0.925; // make SPIKY_GRAD apply force earlier (particles don't have to be as close)
@@ -38,37 +35,45 @@ static const float MAX_TEMPERATURE = 1000.0;
 
 static const float THERMAL_DIFFUSIVITY = 0.25;
 static const float REPEL_STRENGTH_MIN = 4.0;
-static const float REPEL_STRENGTH_MAX = 4.0; // 20
+static const float REPEL_STRENGTH_MAX = 20.0;
 static const float REPEL_FACTOR_MIN = 1.0 / REPEL_STRENGTH_MAX;
 static const float REPEL_FACTOR_MAX = 1.0 / REPEL_STRENGTH_MIN;
 static const float CLUSTERING_RESISTANCE = 1.0;
-static const float SURFACE_TENSION_WATER = 5.0;
+static const float SURFACE_TENSION_WATER = 2500.0;
 
 static const float STATE_CORRECTION_OFFSET = 0.000001; // offset to ensure two states can't be == 1 at the same time
 static const float REPEL_STRENGTH_SMOOTHING_START_SOLID = 0.9;
 
 static const float ALMOST_BUT_NOT_QUITE_ZERO = 0.00001; // used to prevent division by zero
 
+static const int TEXTURE_AXIS_MAX = 16384;
+
 //#region[rgba(80, 0, 0, 1)] | WARNING: shared with ElementSimulator.cs! must be equal!
+static const int START_PARTICLE_COUNT = 8192; // must be divisible by THREAD_COUNT_X!
+static const int START_PARTICLE_COUNT_ACTIVE = 8192;
+
+static const uint PARTICLE_TEXTURE_SIZE_X = min(START_PARTICLE_COUNT_ACTIVE, TEXTURE_AXIS_MAX);
+static const uint PARTICLE_TEXTURE_SIZE_Y = min((START_PARTICLE_COUNT_ACTIVE - (START_PARTICLE_COUNT_ACTIVE % PARTICLE_TEXTURE_SIZE_X)) / PARTICLE_TEXTURE_SIZE_X, TEXTURE_AXIS_MAX);
+
 static const int OUTPUT_THREAD_COUNT_X = 32;
 static const int OUTPUT_THREAD_COUNT_Y = 32;
 
-static const int BINS_THREAD_COUNT_X = 16;
-static const int BINS_THREAD_COUNT_Y = 16;
+static const int BINS_THREAD_COUNT_X = 32;
+static const int BINS_THREAD_COUNT_Y = 32;
 
-static const int THREAD_COUNT_X = 64;
+static const int THREAD_COUNT_X = 64; // TODO: this can in theory go up to 1024 - make it happen!
 static const uint PIXELS_PER_TILE_EDGE = 32;
-static const uint GRID_WIDTH_TILES = 50;
-static const uint GRID_HEIGHT_TILES = 50;
+static const uint GRID_WIDTH_TILES = 32;
+static const uint GRID_HEIGHT_TILES = 32;
 static const uint GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
 static const uint GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
-static const uint BIN_SIZE = 4;
+static const uint BIN_SIZE = 8;
 static const uint BIN_COUNT_X = GRID_WIDTH_PIXELS / BIN_SIZE;
 static const uint BIN_COUNT_Y = GRID_HEIGHT_PIXELS / BIN_SIZE;
 static const uint BIN_MAX_AMOUNT_OF_CONTENT = 12;
 //#endregion
 
-static const uint BIN_CLUSTER_SIZE = 9;
+static const uint BIN_CLUSTER_SIZE = 5;
 static const uint BIN_CLUSTER_CONTENT_MAX = BIN_CLUSTER_SIZE * BIN_MAX_AMOUNT_OF_CONTENT;
 
 static const int ELEMENT_COUNT = 1;
@@ -131,36 +136,48 @@ float2 PreventValueBeingZero(float2 f2){
 }
 
 struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's Particle
-	float2 pos;
-	half2 binPos;
+	float2 pos; // *
 	float2 velocity; 
 	float2 force;
-
 	float density;
 	float pressure;
 	float temperature;
-	float temperatureStartFrame;
+	float temperatureStartFrame;  // *
 	float repelFactor;
-	half isActive; // every thread needs a particle, so some will get inactive particles instead
-	uint elementIndex;
+	half isActive;  // *
 	half4 particlesToHeat;
 	half4 heatToGive;
-	half debugTemp;
-	half debugThermal;
+	// half debugTemp;
+	// half debugThermal;
 	half debug1;
 	half debug2;
 	half debug3;
 	half debug4;
-	half debug5;
-	half debug6;
-	half debug7;
-	half debug8;
-	half debug9;
-	half debug10;
-	half debug11;
-	half debug12;
-	half abort;
-	uint sortingIndex;
+	// half debug5;
+	// half debug6;
+	// half debug7;
+	// half debug8;
+	// half debug9;
+	// half debug10;
+	// half debug11;
+	// half debug12;
+	// half debug13;
+
+	// 92 byte
+	// half padding_0;
+	// half padding_1;
+	// half padding_2;
+	// half padding_3;
+	// half padding_4;
+	// half padding_5;
+	// half padding_6;
+	// half padding_7;
+	// half padding_8;
+	// 128 byte
+
+	uint binPosX;
+	uint binPosY;
+	uint elementIndex;  // *
 
 	float GetMass()						{ return Mass[elementIndex]; }
 	float GetViscosity()				{ return Viscosity[elementIndex]; }
@@ -221,436 +238,253 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 	}
 };
 
-struct DebugVars{ // WARNING: variables must correspond to ElementSimulator.compute's Particle!
-	half2 debugID;
-	half debug_00;
-	half debug_01;
-	half debug_02;
-	half debug_03;
-	half debug_04;
-	half debug_05;
-	half debug_06;
-	half debug_07;
-	half debug_08;
-	half debug_09;
-	half debug_10;
-	half debug_11;
-	half debug_12;
-	half debug_13;
-	half debug_14;
+// struct DebugVars{ // WARNING: variables must correspond to ElementSimulator.compute's Particle!
+// 	half2 debugID;
+// 	half debug_00;
+// 	half debug_01;
+// 	half debug_02;
+// 	half debug_03;
+// 	half debug_04;
+// 	half debug_05;
+// 	half debug_06;
+// 	half debug_07;
+// 	half debug_08;
+// 	half debug_09;
+// 	half debug_10;
+// 	half debug_11;
+// 	half debug_12;
+// 	half debug_13;
+// 	half debug_14;
 
-	void SetID(half id1, half id2){
-		debugID.x = id1;
-		debugID.y = id2;
-	}
+// 	void SetID(half id1, half id2){
+// 		debugID.x = id1;
+// 		debugID.y = id2;
+// 	}
 
-	void Set(uint index, float val){
-		if(index == 0) debug_00 = val;
-		else if(index == 1) debug_01 = val;
-		else if(index == 2) debug_02 = val;
-		else if(index == 3) debug_03 = val;
-		else if(index == 4) debug_04 = val;
-		else if(index == 5) debug_05 = val;
-		else if(index == 6) debug_06 = val;
-		else if(index == 7) debug_07 = val;
-		else if(index == 8) debug_08 = val;
-		else if(index == 9) debug_09 = val;
-		else if(index == 10) debug_10 = val;
-		else if(index == 11) debug_11 = val;
-		else if(index == 12) debug_12 = val;
-		else if(index == 13) debug_13 = val;
-		else if(index == 14) debug_14 = val;
-		//else hasNewValue = 0;
-	}
-};
+// 	void Set(uint index, float val){
+// 		if(index == 0) debug_00 = val;
+// 		else if(index == 1) debug_01 = val;
+// 		else if(index == 2) debug_02 = val;
+// 		else if(index == 3) debug_03 = val;
+// 		else if(index == 4) debug_04 = val;
+// 		else if(index == 5) debug_05 = val;
+// 		else if(index == 6) debug_06 = val;
+// 		else if(index == 7) debug_07 = val;
+// 		else if(index == 8) debug_08 = val;
+// 		else if(index == 9) debug_09 = val;
+// 		else if(index == 10) debug_10 = val;
+// 		else if(index == 11) debug_11 = val;
+// 		else if(index == 12) debug_12 = val;
+// 		else if(index == 13) debug_13 = val;
+// 		else if(index == 14) debug_14 = val;
+// 		//else hasNewValue = 0;
+// 	}
+// };
 
 
 RWStructuredBuffer<Particle> particles;
 uniform uint particleCount;
-uniform int debugBinIndexX;
-uniform int debugBinIndexY;
-RWStructuredBuffer<DebugVars> debugVars;
+// uniform int debugBinIndexX;
+// uniform int debugBinIndexY;
+// RWStructuredBuffer<DebugVars> debugVars;
 
+RWTexture2D<half> binsDirty;
 RWTexture2D<half> binLoads;
 RWTexture2D<uint4> bins_00;
 RWTexture2D<uint4> bins_01;
 RWTexture2D<uint4> bins_02;
-//RWTexture2D<half4> bins_03;
+
+RWTexture2D<float4> particlesVelocityAndForce;
+// RWTexture2D<float4> particlesDensityPressureTemperatureAndRepel;
+// RWTexture2D<float4> particlesHeatExchange;
+// RWTexture2D<float4> particlesHeatIndices;
+// RWTexture2D<uint2> particlesBins;
 
 RWTexture2D<float4> output;
 half isFirstFrame;
 
-RWTexture2D<half3> particlesSorted_0;
-RWTexture2D<half3> particlesSorted_1; 
-uint iterations;
-
 // optimization: not accessing particles other than yourself could be worth looking into
 
-
-bool IsEven(float f){
-	return fmod(f, 2) == 0;
+uint2 GetParticleTextureCoords(uint particleIndex){
+	uint x = particleIndex % PARTICLE_TEXTURE_SIZE_X;
+	uint y = floor((particleIndex - x) / half(PARTICLE_TEXTURE_SIZE_Y));
+	return uint2(x, y);
 }
 
-[numthreads(32, 32, 1)]
-void DebugBins(uint3 id : SV_DISPATCHTHREADID){
-	// half4 pixel = half4(2.0, 1.0, 0.5, 0.0);
-	// bins_00[id.xy] = pixel;
+uint GetBinPosX(float2 pos) {
+	return floor(pos.x / BIN_SIZE);
 }
 
-uint2 GetBinPos(float2 pos) {
-	return uint2(floor(pos.x / BIN_SIZE), floor(pos.y / BIN_SIZE));
+uint GetBinPosY(float2 pos) {
+	return floor(pos.y / BIN_SIZE);
 }
 
 void GetParticlesInBin(uint2 binPos, out uint binLoad, out uint binParticles[BIN_MAX_AMOUNT_OF_CONTENT]){
 	binLoad = round(binLoads.Load(binPos) * BIN_MAX_AMOUNT_OF_CONTENT);
 
-	uint shouldLoadBins_00 = sign01(binLoad);
-	uint shouldLoadBins_01 = sign01(binLoad - 4);
-	uint shouldLoadBins_02 = sign01(binLoad - 8);
-	//uint shouldLoadBins_03 = sign01(binLoad - 12);
-
-	binParticles[0] = 0.0;
-	binParticles[1] = 0.0;
-	binParticles[2] = 0.0;
-	binParticles[3] = 0.0;
-	binParticles[4] = 0.0;
-	binParticles[5] = 0.0;
-	binParticles[6] = 0.0;
-	binParticles[7] = 0.0;
-	binParticles[8] = 0.0;
-	binParticles[9] = 0.0;
-	binParticles[10] = 0.0;
-	binParticles[11] = 0.0;
-	// binParticles[12] = 0.0;
-	// binParticles[13] = 0.0;
-	// binParticles[14] = 0.0;
-	// binParticles[15] = 0.0;
+	uint zero = 0;
+	binParticles[0] = zero;
+	binParticles[1] = zero;
+	binParticles[2] = zero;
+	binParticles[3] = zero;
+	binParticles[4] = zero;
+	binParticles[5] = zero;
+	binParticles[6] = zero;
+	binParticles[7] = zero;
+	binParticles[8] = zero;
+	binParticles[9] = zero;
+	binParticles[10] = zero;
+	binParticles[11] = zero;
 	
-	if(shouldLoadBins_00 == 1){
-		uint4 binContents = round(bins_00.Load(binPos));// * particleCount);
+	uint4 binContents;
+	if(binLoad > 0){
+		binContents = round(bins_00.Load(binPos));
 		binParticles[0] = binContents.x;
 		binParticles[1] = binContents.y;
 		binParticles[2] = binContents.z;
 		binParticles[3] = binContents.w;
 	}
-	if(shouldLoadBins_01 == 1){
-		uint4 binContents = round(bins_01.Load(binPos));// * particleCount);
+	if(binLoad > 4){
+		binContents = round(bins_01.Load(binPos));
 		binParticles[4] = binContents.x;
 		binParticles[5] = binContents.y;
 		binParticles[6] = binContents.z;
 		binParticles[7] = binContents.w;
 	}
-	if(shouldLoadBins_02 == 1){
-		uint4 binContents = round(bins_02.Load(binPos));// * particleCount);
+	if(binLoad > 8){
+		binContents = round(bins_02.Load(binPos));
 		binParticles[8] = binContents.x;
 		binParticles[9] = binContents.y;
 		binParticles[10] = binContents.z;
 		binParticles[11] = binContents.w;
 	}
-	// if(shouldLoadBins_03 == 1){
-	// 	uint4 binContents = round(bins_03.Load(binPos) * particleCount);
-	// 	binParticles[12] = binContents.x;
-	// 	binParticles[13] = binContents.y;
-	// 	binParticles[14] = binContents.z;
-	// 	binParticles[15] = binContents.w;
-	// }
-
-	// if(binPos.x == 29 && binPos.y == 0){
-	// 	debugVars[0].Set(8, binLoad);
-	// 	debugVars[0].Set(9, binParticles[0]);
-	// 	debugVars[0].Set(10, binParticles[1]);
-	// 	debugVars[0].Set(11, binParticles[2]);
-	// 	debugVars[0].Set(12, binParticles[3]);
-	// 	debugVars[0].Set(13, binParticles[4]);
-	// 	debugVars[0].Set(14, binParticles[5]);
-	// 	debugVars[0].Set(15, binParticles[6]);
-	// 	debugVars[0].Set(16, binParticles[7]);
-	// }
 }
 
 void GetNeighboringParticles(int particleIndex, uint2 binPos, out uint clusterLoad, out uint clusterContent[BIN_CLUSTER_CONTENT_MAX]){
 
-
 	// optimization: try seeing if this gets slower or faster with ifs
 
-	half canGo_L = sign01(binPos.x);
-	half canGo_R = sign01(BIN_COUNT_X - 1 - binPos.x);
-	half canGo_B = sign01(binPos.y);
-	half canGo_T = sign01(BIN_COUNT_Y - 1 - binPos.y);
+	uint zero = 0;
+	uint one = 1;
 
-	uint binPos_L = clamp(binPos.x - 1, 0, BIN_COUNT_X - 1);
-	uint binPos_R = clamp(binPos.x + 1, 0, BIN_COUNT_X - 1);
-	uint binPos_B = clamp(binPos.y - 1, 0, BIN_COUNT_Y - 1);
-	uint binPos_T = clamp(binPos.y + 1, 0, BIN_COUNT_Y - 1);
+	uint2 binPos_L = uint2(clamp(binPos.x - one, zero, BIN_COUNT_X - one), binPos.y);
+	uint2 binPos_R = uint2(clamp(binPos.x + one, zero, BIN_COUNT_X - one), binPos.y);
+	uint2 binPos_B = uint2(binPos.x, clamp(binPos.y - one, zero, BIN_COUNT_Y - one));
+	uint2 binPos_T = uint2(binPos.x, clamp(binPos.y + one, zero, BIN_COUNT_Y - one));
+	
 
 	uint binLoad;
-	uint binLoad_L;
-	uint binLoad_R;
-	uint binLoad_T;
-	uint binLoad_B;
-	uint binLoad_TL;
-	uint binLoad_TR;
-	uint binLoad_BL;
-	uint binLoad_BR;
 	uint binContents[BIN_MAX_AMOUNT_OF_CONTENT];
-	uint binContents_L[BIN_MAX_AMOUNT_OF_CONTENT];
-	uint binContents_R[BIN_MAX_AMOUNT_OF_CONTENT];
-	uint binContents_T[BIN_MAX_AMOUNT_OF_CONTENT];
-	uint binContents_B[BIN_MAX_AMOUNT_OF_CONTENT];
-	uint binContents_TL[BIN_MAX_AMOUNT_OF_CONTENT];
-	uint binContents_TR[BIN_MAX_AMOUNT_OF_CONTENT];
-	uint binContents_BL[BIN_MAX_AMOUNT_OF_CONTENT];
-	uint binContents_BR[BIN_MAX_AMOUNT_OF_CONTENT];
+	uint i = zero;
+	uint iLocal = zero;
 
 	GetParticlesInBin(binPos, binLoad, binContents);
-	GetParticlesInBin(uint2(binPos_L, binPos.y), binLoad_L, binContents_L);
-	GetParticlesInBin(uint2(binPos_R, binPos.y), binLoad_R, binContents_R);
-	GetParticlesInBin(uint2(binPos.x, binPos_T), binLoad_T, binContents_T);
-	GetParticlesInBin(uint2(binPos.x, binPos_B), binLoad_B, binContents_B);
-	GetParticlesInBin(uint2(binPos_L, binPos_T), binLoad_TL, binContents_TL);
-	GetParticlesInBin(uint2(binPos_R, binPos_T), binLoad_TR, binContents_TR);
-	GetParticlesInBin(uint2(binPos_L, binPos_B), binLoad_BL, binContents_BL);
-	GetParticlesInBin(uint2(binPos_R, binPos_B), binLoad_BR, binContents_BR);
-
-	binLoad_L = binLoad_L * canGo_L;
-	binLoad_R = binLoad_R * canGo_R;
-	binLoad_T = binLoad_T * canGo_T;
-	binLoad_B = binLoad_B * canGo_B;
-	binLoad_TL = binLoad_TL * canGo_T * canGo_L;
-	binLoad_TR = binLoad_TR * canGo_T * canGo_R;
-	binLoad_BL = binLoad_BL * canGo_B * canGo_L;
-	binLoad_BR = binLoad_BR * canGo_B * canGo_R;
-
-	clusterLoad = 
-	binLoad + 
-	binLoad_L + 
-	binLoad_R + 
-	binLoad_T + 
-	binLoad_B + 
-	binLoad_TL + 
-	binLoad_TR + 
-	binLoad_BL + 
-	binLoad_BR;
-
-	uint i = 0;
+	clusterLoad = binLoad;
 	for(; i < binLoad; i++){
 		clusterContent[i] = binContents[i];
 	} 
-	for(uint iL = 0; iL < binLoad_L; iL++, i++){
-		clusterContent[i] = binContents_L[iL];
-	} 
-	for(uint iR = 0; iR < binLoad_R; iR++, i++){
-		clusterContent[i] = binContents_R[iR];
-	} 
-	for(uint iT = 0; iT < binLoad_T; iT++, i++){
-		clusterContent[i] = binContents_T[iT];
-	} 
-	for(uint iB = 0; iB < binLoad_B; iB++, i++){
-		clusterContent[i] = binContents_B[iB];
-	} 
-	for(uint iTL = 0; iTL < binLoad_TL; iTL++, i++){
-		clusterContent[i] = binContents_TL[iTL];
-	} 
-	for(uint iTR = 0; iTR < binLoad_TR; iTR++, i++){
-		clusterContent[i] = binContents_TR[iTR];
-	} 
-	for(uint iBL = 0; iBL < binLoad_BL; iBL++, i++){
-		clusterContent[i] = binContents_BL[iBL];
-	} 
-	for(uint iBR = 0; iBR < binLoad_BR; iBR++, i++){
-		clusterContent[i] = binContents_BR[iBR];
-	} 
-	for(; i < BIN_CLUSTER_CONTENT_MAX; i++){
-		clusterContent[i] = 0;
-	}
 
-	// if(binPos.x == 29 && binPos.y == 0){
-	// 	debugVars[0].Set(0, clusterContent[0]);
-	// 	debugVars[0].Set(1, clusterContent[1]);
-	// 	debugVars[0].Set(2, clusterContent[2]);
-	// 	debugVars[0].Set(3, clusterContent[3]);
-	// 	debugVars[0].Set(4, clusterContent[4]);
-	// 	debugVars[0].Set(5, clusterContent[5]);
-	// 	debugVars[0].Set(6, clusterContent[6]);
-	// 	debugVars[0].Set(7, clusterContent[7]);
-	// 	debugVars[0].Set(8, 0);
-	// 	debugVars[0].Set(9, binLoad);
-	// }
+	GetParticlesInBin(binPos_L, binLoad, binContents);
+	clusterLoad += binLoad;
+	for(iLocal = zero; iLocal < binLoad; iLocal++, i++){
+		clusterContent[i] = binContents[iLocal];
+	} 
+
+	GetParticlesInBin(binPos_R, binLoad, binContents);
+	clusterLoad += binLoad;
+	for(iLocal = zero; iLocal < binLoad; iLocal++, i++){
+		clusterContent[i] = binContents[iLocal];
+	} 
+
+	GetParticlesInBin(binPos_T, binLoad, binContents);
+	clusterLoad += binLoad;
+	for(iLocal = zero; iLocal < binLoad; iLocal++, i++){
+		clusterContent[i] = binContents[iLocal];
+	} 
+
+
+	GetParticlesInBin(binPos_B, binLoad, binContents);
+	clusterLoad += binLoad;
+	for(iLocal = zero; iLocal < binLoad; iLocal++, i++){
+		clusterContent[i] = binContents[iLocal];
+	} 
+
+	for(; i < BIN_CLUSTER_CONTENT_MAX; i++){
+		clusterContent[i] = zero;
+	}
 }
 
+// called once
 [numthreads(THREAD_COUNT_X, 1, 1)]
-void Init(uint3 id : SV_DispatchThreadID) { // TODO: is this still needed?
-	iterations = 0;
-
+void Init(uint3 id : SV_DispatchThreadID) {
 	Particle particle = particles[id.x];
-	particle.binPos = GetBinPos(particle.pos);
-
-	particle.debugTemp = 0; 
-	
-	particle.debugThermal = 0;
-	particle.debug1 = 0;
-	particle.debug2 = 0;
-	particle.debug3 = 0;
-	particle.debug4 = 0;
-	particle.debug5 = 0;
-	particle.debug6 = 0;
-	particle.debug7 = 0;
-	particle.debug8 = 0;
-	particle.debug9 = 0;
-	particle.debug10 = 0;
-	particle.debug11 = 0;
-	particle.debug12 = 0;
+	particle.binPosX = GetBinPosX(particle.pos);
+	particle.binPosY = GetBinPosY(particle.pos);
 	particle.SetTemperature(particle.temperatureStartFrame);
-
-	particlesSorted_0[id.xy] = half3(particle.pos.x, particle.pos.y, id.x);
-
 	particles[id.x] = particle;
 }
 
-[numthreads(BINS_THREAD_COUNT_X, BINS_THREAD_COUNT_Y, 1)]
-void ClearBins(uint3 id : SV_DispatchThreadID) {
-	binLoads[id.xy] = 0.0;
-	bins_00[id.xy].wxyz = 0;
-	bins_01[id.xy].wxyz = 0;
-	bins_02[id.xy].wxyz = 0;
-	//bins_03[id.xy].wxyz = 0.0;
-}
-
-
+// called continuosly
 [numthreads(OUTPUT_THREAD_COUNT_X, OUTPUT_THREAD_COUNT_Y, 1)]
 void ClearOutputTexture(uint3 id : SV_DispatchThreadID) {
 	output[id.xy] = float4(0.0, 0.0, 0.0, 1.0);
-	//output[id.xy] = float4(id.x % (BIN_SIZE + 1) * 0.5, 0.25, id.y % (BIN_SIZE + 1) * 0.5, 1.0);
 }
 
 [numthreads(BINS_THREAD_COUNT_X, BINS_THREAD_COUNT_Y, 1)]
 void CacheParticlesInBins(uint3 id : SV_DispatchThreadID){
+	half isDirty = max(isFirstFrame, binsDirty.Load(id.xy));
+	binsDirty[id.xy] = 0.0;
+	if(isDirty == 0){
+		return;
+	}
 
 	half binLoad = 0;
 	half binContent[BIN_MAX_AMOUNT_OF_CONTENT] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 	for(uint i = 0; i < particleCount; i++){ // TODO: can we skip particles that have already found their bin?
 		Particle particle = particles[i];
-		// if(particle.isActive == 0){
-		// 	break;
-		// }
 
-		half isParticleInBinX = 1 - signAbs(id.x - particle.binPos.x);
-		half isParticleInBinY = 1 - signAbs(id.y - particle.binPos.y);
-
-
-		if(isParticleInBinX == 1 && isParticleInBinY == 1){
-			if(id.x == debugBinIndexX && id.y == debugBinIndexY){
-				// particle.debug1 = particle.binPos.x;
-				// particle.debug2 = particle.binPos.y;
-				// particle.debug3 = id.x;
-				// particle.debug4 = id.y;
-			}
-
+		if(particle.binPosX == id.x && particle.binPosY == id.y){
 			binContent[binLoad] = i;
 			binLoad = min(binLoad + 1, BIN_MAX_AMOUNT_OF_CONTENT);
-			
-			//particle.debugThermal = binLoad;
-			//particles[i] = particle;
+			particles[i] = particle;
 		}
-	}
 
-	// if(id.x == 29 && id.y == 0){
-	// 	debugVars[0].Set(0, binContent[0]);
-	// 	debugVars[0].Set(1, binContent[1]);
-	// 	debugVars[0].Set(2, binContent[2]);
-	// 	debugVars[0].Set(3, binContent[3]);
-	// 	debugVars[0].Set(4, binContent[4]);
-	// 	debugVars[0].Set(5, binContent[5]);
-	// 	debugVars[0].Set(6, binContent[6]);
-	// 	debugVars[0].Set(7, binContent[7]);
-	// }
+		// TODO: check if this improves things (needs a lot of density though)
+		// if(binLoad >= BIN_MAX_AMOUNT_OF_CONTENT){
+		// 	break;
+		// }
+	}
 
 	binLoads[id.xy] = binLoad / half(BIN_MAX_AMOUNT_OF_CONTENT);
 	
-	uint particleCountAsHalf = particleCount;
 	uint4 binContent_00 = uint4(
-		binContent[0],// / particleCountAsHalf,
-		binContent[1],// / particleCountAsHalf,
-		binContent[2],// / particleCountAsHalf,
-		binContent[3]// / particleCountAsHalf
+		binContent[0],
+		binContent[1],
+		binContent[2],
+		binContent[3]
 	);
 	bins_00[id.xy] = binContent_00;
 	
 	uint4 binContent_01 = uint4(
-		binContent[4],// / particleCountAsHalf,
-		binContent[5],// / particleCountAsHalf,
-		binContent[6],// / particleCountAsHalf,
-		binContent[7]// / particleCountAsHalf
+		binContent[4],
+		binContent[5],
+		binContent[6],
+		binContent[7]
 	);
 	bins_01[id.xy] = binContent_01;
 
 	uint4 binContent_02 = uint4(
-		binContent[8],// / particleCountAsHalf,
-		binContent[9],// / particleCountAsHalf,
-		binContent[10],// / particleCountAsHalf,
-		binContent[11]// / particleCountAsHalf
+		binContent[8],
+		binContent[9],
+		binContent[10],
+		binContent[11]
 	);
 	bins_02[id.xy] = binContent_02;
-
-	// half4 binContent_03 = half4(
-	// 	binContent[12] / particleCount,
-	// 	binContent[13] / particleCount,
-	// 	binContent[14] / particleCount,
-	// 	binContent[15] / particleCount
-	// );
-	// bins_03[id.xy] = binContent_03;
 }
 
 [numthreads(THREAD_COUNT_X, 1, 1)]
-void ResetTemporaryVariables(uint3 id : SV_DispatchThreadID) {
-	Particle particle = particles[id.x];
-	particle.particlesToHeat = half4(0, 0, 0, 0);
-	particle.heatToGive = half4(0.0, 0.0, 0.0, 0.0);
-	
-	particle.debugTemp = 0;
-	particle.debugThermal = 0;
-	particle.debug1 = 0;
-	particle.debug2 = 0;
-	particle.debug3 = 0;
-	particle.debug4 = 0;
-	particle.debug5 = 0;
-	particle.debug6 = 0;
-	particle.debug7 = 0;
-	particle.debug8 = 0;
-	particle.debug9 = 0;
-	particle.debug10 = 0;
-	particle.debug11 = 0;
-	particle.debug12 = 0;
-
-	particles[id.x] = particle;
-}
-
-[numthreads(THREAD_COUNT_X, 1, 1)]
-void SortParticles(uint3 id : SV_DISPATCHTHREADID){
-	bool isIterationEven = IsEven(iterations);
-	bool shouldUseMax = isIterationEven == IsEven(id.x);
-
-	half3 particleInfo = particlesSorted_0.Load(id.x);
-	half3 particleNeighborInfo = isIterationEven ? particlesSorted_0.Load(id.x - 1) : particlesSorted_0.Load(id.x + 1);
-	half3 result = shouldUseMax ? max(particleInfo.x, particleNeighborInfo.x) : min(particleInfo.x, particleNeighborInfo.x);
-
-	if(isIterationEven){
-		particlesSorted_1[id.xy] = result;
-	}
-	else{
-		particlesSorted_0[id.xy] = result;
-	}
-}
-
-[numthreads(THREAD_COUNT_X, 1, 1)]
-void FinishSortParticles(uint3 id : SV_DISPATCHTHREADID){
-	half3 particleInfo = IsEven(iterations) ? particlesSorted_1.Load(id.xy) : particlesSorted_0.Load(id.xy);
-	particles[particleInfo.z].sortingIndex = id.x;
-}
-
-[numthreads(THREAD_COUNT_X, 1, 1)]
-void ComputeDensityHeatAndPressure(uint3 id : SV_DispatchThreadID) {
+void ComputeDensity(uint3 id : SV_DispatchThreadID) {
 	Particle particle = particles[id.x];
 	if(particle.isActive == 0){
 		return;
@@ -658,32 +492,52 @@ void ComputeDensityHeatAndPressure(uint3 id : SV_DispatchThreadID) {
 
 	uint clusterLoad;
 	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
-	GetNeighboringParticles(id.x, particle.binPos, clusterLoad, clusterContents);
+	GetNeighboringParticles(id.x, uint2(particle.binPosX, particle.binPosY), clusterLoad, clusterContents);
 
-	particle.density = particle.GetMass() * POLY6 * pow(HSQ, 2.0);;
+	particle.density = particle.GetMass() * POLY6 * pow(HSQ, 2.0);
 	for (uint i = 0; i < clusterLoad; i++){
-		uint neighborIndex = clusterContents[i];
-
-	// for (uint i = 0; i < particleCount; i++){
-	// 	uint neighborIndex = i;
-	
-	// uint pIndex = id.x;
-	// for (uint i = 0; i < particleCount; i++){
-	// 	pIndex = (i + 1) % particleCount;
-	 	//int neighborIndex = pIndex;
+		uint neighborIndex = clusterContents[0];
 
 		Particle otherParticle = particles[neighborIndex];
 		float2 dir = otherParticle.pos - particle.pos;
 		float r2 = (dir.x * dir.x + dir.y * dir.y) * max(particle.repelFactor, otherParticle.repelFactor);
 
-		half areBothParticlesActive = particle.isActive * otherParticle.isActive;
 		half areParticlesDifferent = signAbs(id.x - neighborIndex);
-		half shouldApplyDensity = areParticlesDifferent * areBothParticlesActive * step(r2, HSQ);
-		// particle.debugThermal = clusterLoad;
-		// particle.debug1 = r2;
-		// particle.debug2 = HSQ;
-		// particle.debug3 = pow(HSQ - r2, 2.0);
+		half shouldApplyDensity = areParticlesDifferent * step(r2, HSQ);
 		particle.density += shouldApplyDensity * otherParticle.GetMass() * POLY6 * pow(HSQ - r2, 2.0);
+	}
+
+	particles[id.x] = particle;
+	
+}
+
+[numthreads(THREAD_COUNT_X, 1, 1)]
+void ComputePressure(uint3 id : SV_DispatchThreadID) {
+	Particle particle = particles[id.x];
+	particle.pressure = particle.isActive * GAS_CONST * (particle.density - REST_DENS);
+	particles[id.x] = particle;
+}
+
+[numthreads(THREAD_COUNT_X, 1, 1)]
+void ComputeHeat(uint3 id : SV_DispatchThreadID) {
+	Particle particle = particles[id.x];
+	if(particle.isActive == 0){
+		return;
+	}
+
+	uint clusterLoad;
+	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
+	GetNeighboringParticles(id.x, uint2(particle.binPosX, particle.binPosY), clusterLoad, clusterContents);
+
+	for (uint i = 0; i < clusterLoad; i++){
+		uint neighborIndex = clusterContents[i];
+
+		Particle otherParticle = particles[neighborIndex];
+		float2 dir = otherParticle.pos - particle.pos;
+		float r2 = (dir.x * dir.x + dir.y * dir.y) * max(particle.repelFactor, otherParticle.repelFactor);
+
+		half areParticlesDifferent = signAbs(id.x - neighborIndex);
+		half shouldApplyDensity = areParticlesDifferent * step(r2, HSQ);
 
 		half temperatureStartFrame = particle.temperatureStartFrame;
 		half temperatureStartFrameOther = otherParticle.temperatureStartFrame;
@@ -691,7 +545,7 @@ void ComputeDensityHeatAndPressure(uint3 id : SV_DispatchThreadID) {
 		half isWithinRange = step(r2, HSQ_TEMPERATURE);
 		half isWarmerThanNeighbor = step(temperatureStartFrameOther, temperatureStartFrame);
 		half isNeighborBelowMaxHeat = step(otherParticle.temperatureStartFrame, MAX_TEMPERATURE);
-		half shouldApplyTemperature = isWarmerThanNeighbor * areParticlesDifferent * areBothParticlesActive * isWithinRange * isNeighborBelowMaxHeat;
+		half shouldApplyTemperature = isWarmerThanNeighbor * areParticlesDifferent * isWithinRange * isNeighborBelowMaxHeat;
 
 		half thermalDiffusivity = (particle.GetThermalDiffusivity() + otherParticle.GetThermalDiffusivity()) * 0.5;
 		half exchangeGive = shouldApplyTemperature * (temperatureStartFrame - temperatureStartFrameOther) * thermalDiffusivity;
@@ -699,55 +553,50 @@ void ComputeDensityHeatAndPressure(uint3 id : SV_DispatchThreadID) {
 		half4 particlesToHeat = particle.particlesToHeat;
 		half4 heatToGive = particle.heatToGive; 
 
-		half isGreaterThanW = sign01(exchangeGive - heatToGive.w) * shouldApplyTemperature;
-		heatToGive.x = lerp(heatToGive.x, heatToGive.y, isGreaterThanW);
-		heatToGive.y = lerp(heatToGive.y, heatToGive.z, isGreaterThanW);
-		heatToGive.z = lerp(heatToGive.z, heatToGive.w, isGreaterThanW);
-		heatToGive.w = lerp(heatToGive.w, exchangeGive, isGreaterThanW);
-		particlesToHeat.x = lerp(particlesToHeat.x, particlesToHeat.y, isGreaterThanW);
-		particlesToHeat.y = lerp(particlesToHeat.y, particlesToHeat.z, isGreaterThanW);
-		particlesToHeat.z = lerp(particlesToHeat.z, particlesToHeat.w, isGreaterThanW);
-		particlesToHeat.w = lerp(particlesToHeat.w, neighborIndex, isGreaterThanW);
+		if(exchangeGive > heatToGive.w){
+			heatToGive.x = heatToGive.y;
+			heatToGive.y = heatToGive.z;
+			heatToGive.z = heatToGive.w;
+			heatToGive.w = exchangeGive;
 
-		half isGreaterThanZ = sign01(exchangeGive - heatToGive.z) * (1 - isGreaterThanW) * shouldApplyTemperature;
-		heatToGive.x = lerp(heatToGive.x, heatToGive.y, isGreaterThanZ);
-		heatToGive.y = lerp(heatToGive.y, heatToGive.z, isGreaterThanZ);
-		heatToGive.z = lerp(heatToGive.z, exchangeGive, isGreaterThanZ);
-		particlesToHeat.x = lerp(particlesToHeat.x, particlesToHeat.y, isGreaterThanZ);
-		particlesToHeat.y = lerp(particlesToHeat.y, particlesToHeat.z, isGreaterThanZ);
-		particlesToHeat.z = lerp(particlesToHeat.z, neighborIndex, isGreaterThanZ);
+			particlesToHeat.x = particlesToHeat.y;
+			particlesToHeat.y = particlesToHeat.z;
+			particlesToHeat.z = particlesToHeat.w;
+			particlesToHeat.w = neighborIndex;
+		}
+		else if(exchangeGive > heatToGive.z){
+			heatToGive.x = heatToGive.y;
+			heatToGive.y = heatToGive.z;
+			heatToGive.z = exchangeGive;
 
-		half isGreaterThanY = sign01(exchangeGive - heatToGive.y) * (1 - isGreaterThanW) * (1 - isGreaterThanZ) * shouldApplyTemperature;
-		heatToGive.x = lerp(heatToGive.x, heatToGive.y, isGreaterThanY);
-		heatToGive.y = lerp(heatToGive.y, exchangeGive, isGreaterThanY);
-		particlesToHeat.x = lerp(particlesToHeat.x, particlesToHeat.y, isGreaterThanY);
-		particlesToHeat.y = lerp(particlesToHeat.y, neighborIndex, isGreaterThanY);
-		
-		half isGreaterThanX = sign01(exchangeGive - heatToGive.x) * (1 - isGreaterThanW) * (1 - isGreaterThanZ) * (1 - isGreaterThanY) * shouldApplyTemperature;
-		heatToGive.x = lerp(heatToGive.x, exchangeGive, isGreaterThanX);
-		particlesToHeat.x = lerp(particlesToHeat.x, neighborIndex, isGreaterThanX);
+			particlesToHeat.x = particlesToHeat.y;
+			particlesToHeat.y = particlesToHeat.z;
+			particlesToHeat.z = neighborIndex;
+		}
+		else if(exchangeGive > heatToGive.y){
+			heatToGive.x = heatToGive.y;
+			heatToGive.y = exchangeGive;
+
+			particlesToHeat.x = particlesToHeat.y;
+			particlesToHeat.y = neighborIndex;
+		}
+		else if(exchangeGive > heatToGive.x){
+			heatToGive.x = exchangeGive;
+			particlesToHeat.x = neighborIndex;
+		}
 
 		particle.particlesToHeat = particlesToHeat;
 		particle.heatToGive = heatToGive;
 	}
 
-	// particle.debugThermal = clusterLoad;
-	// particle.debug1 = particle.temperature;
-
 	// clamp components
 	half4 heatToGive = particle.heatToGive;
 	half heat = particle.temperatureStartFrame;
-
 	heatToGive.x = min(heatToGive.x, heat);
 	heatToGive.y = min(heatToGive.y, heat - heatToGive.x);
 	heatToGive.z = min(heatToGive.z, heat - (heatToGive.x + heatToGive.y));
 	heatToGive.w = min(heatToGive.w, heat - (heatToGive.x + heatToGive.y + heatToGive.z));
 	particle.heatToGive = heatToGive;
-
-	particle.pressure = particle.isActive * GAS_CONST * (particle.density - REST_DENS);
-
-
-	particle.debugThermal = particle.sortingIndex;
 
 	particles[id.x] = particle;
 }
@@ -761,16 +610,12 @@ void ApplyHeat(uint3 id : SV_DispatchThreadID) {
 
 	uint clusterLoad;
 	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
-	GetNeighboringParticles(id.x, particle.binPos, clusterLoad, clusterContents);
-
+	GetNeighboringParticles(id.x, uint2(particle.binPosX, particle.binPosY), clusterLoad, clusterContents);
 
 	half heat = particle.temperatureStartFrame;
 	
 	for (uint i = 0; i < clusterLoad; i++){
 		uint neighborIndex = clusterContents[i];
-
-	// for (uint i = 0; i < particleCount; i++){
-	// 	uint neighborIndex = i;
 
 		Particle otherParticle = particles[neighborIndex];
 
@@ -787,20 +632,8 @@ void ApplyHeat(uint3 id : SV_DispatchThreadID) {
 		heat += othersHeatToGive.w * isParticleW;
 	}
 
-
 	half4 heatToGive = particle.heatToGive;
 	particle.SetTemperature(heat - (heatToGive.x + heatToGive.y + heatToGive.z + heatToGive.w));
-
-	// particle.debug1 = clusterLoad;
-	// particle.debug2 = heat;
-	// particle.debug3 = particle.particlesToHeat.x;
-	// particle.debug4 = particle.particlesToHeat.y;
-	// particle.debug5 = particle.particlesToHeat.z;
-	// particle.debug6 = particle.particlesToHeat.w;
-	// particle.debug7 = heatToGive.x;
-	// particle.debug8 = heatToGive.y;
-	// particle.debug9 = heatToGive.z;
-	// particle.debug10 = heatToGive.w;
 
 	particles[id.x] = particle;
 }
@@ -812,53 +645,30 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 		return;
 	}
 
+	uint2 particleTextureCoords = GetParticleTextureCoords(id.x);
+	float4 velocityAndForce = particlesVelocityAndForce.Load(particleTextureCoords);
+
+	particle.debug1 = velocityAndForce.x;
+	particle.debug2 = velocityAndForce.y;
+	particle.debug3 = velocityAndForce.z;
+	particle.debug4 = velocityAndForce.w;
+
 	float2 fpress = float2(0.0, 0.0);
 	float2 fvisc = float2(0.0, 0.0);
 	float2 fsurftens = float2(0.0, 0.0);
+	float2 fgrav = G * particle.density;
 	
 	uint clusterLoad;
 	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
-	GetNeighboringParticles(id.x, particle.binPos, clusterLoad, clusterContents);
+	GetNeighboringParticles(id.x, uint2(particle.binPosX, particle.binPosY), clusterLoad, clusterContents);
 
-	// particle.debug1 = clusterLoad;
-	// particle.debug2 = clusterContents[0];
-	// particle.debug3 = clusterContents[1];
-	// particle.debug4 = clusterContents[2];
-	// particle.debug5 = clusterContents[3];
-	// particle.debug6 = clusterContents[4];
-	// particle.debug7 = clusterContents[5];
-	// particle.debug8 = clusterContents[6];
-	// particle.debug9 = clusterContents[7];
-	// particle.debug10 = clusterContents[8];
-	// particle.debug11 = clusterContents[9];
-	// particle.debug12 = clusterContents[10];
-
-	// if(particle.binPos.x == 29 && particle.binPos.y == 0){
-	// 	debugVars[0].Set(0, clusterLoad);
-	// 	debugVars[0].Set(1, clusterContents[0]);
-	// 	debugVars[0].Set(2, clusterContents[1]);
-	// 	debugVars[0].Set(3, clusterContents[2]);
-	// 	debugVars[0].Set(4, clusterContents[3]);
-	// 	debugVars[0].Set(5, clusterContents[4]);
-	// 	debugVars[0].Set(6, clusterContents[5]);
-	// 	debugVars[0].Set(7, clusterContents[6]);
-	// 	debugVars[0].Set(8, clusterContents[7]);
-	// 	debugVars[0].Set(9, clusterContents[8]);
-	// 	debugVars[0].Set(10, clusterContents[9]);
-	// 	debugVars[0].Set(11, clusterContents[10]);
-	// 	debugVars[0].Set(12, clusterContents[11]);
-	// 	debugVars[0].Set(13, clusterContents[12]);
-	// 	debugVars[0].Set(14, clusterContents[13]);
-	// }
-
-	int touchCount = 0;
 	for (uint i = 0; i < clusterLoad; i++){
 		uint neighborIndex = clusterContents[i];
 	
-	// for (uint i = 0; i < particleCount; i++){
-	// 	int neighborIndex = i;
-
 		Particle otherParticle = particles[neighborIndex];
+		uint2 otherParticleTextureCoords = GetParticleTextureCoords(neighborIndex);
+		float4 otherVelocityAndForce = particlesVelocityAndForce.Load(otherParticleTextureCoords);
+
 		float2 diff = PreventValueBeingZero(otherParticle.pos - particle.pos);
 		float2 diffNormal = normalize(diff);
 
@@ -867,37 +677,25 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 		uint areParticlesDifferent = signAbs(id.x - neighborIndex);
 		uint isTouchingNeighbor = step(r, H);
 		uint shouldApplyAnything = isTouchingNeighbor * areParticlesDifferent * particle.isActive * otherParticle.isActive;
-		touchCount += isTouchingNeighbor;
-		if(neighborIndex == 127 && isTouchingNeighbor == 1){
-			particle.debugTemp = 1;
-		}
 
 		// compute pressure force contribution
 		fpress += shouldApplyAnything * -diffNormal * otherParticle.GetMass() * (particle.pressure + otherParticle.pressure) / (2.0 * otherParticle.density) * SPIKY_GRAD * pow(H - r, 2.0) * CLUSTERING_RESISTANCE;
 		// compute viscosity force contribution
-		fvisc += shouldApplyAnything * otherParticle.GetViscosity() * otherParticle.GetMass() * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
+		fvisc += shouldApplyAnything * otherParticle.GetViscosity() * otherParticle.GetMass() * (otherVelocityAndForce.xy - velocityAndForce.xy) / otherParticle.density * VISC_LAP * (H - r);
 		
-		// bounce off frozen particles
-		float shouldApplyBounce = shouldApplyAnything * floor((isTouchingNeighbor + otherParticle.IsSolid()) / 2.0);
-		particle.velocity.x *= lerp(1.0, diffNormal.x * BOUND_DAMPING, shouldApplyBounce);
-		particle.velocity.y *= lerp(1.0, diffNormal.y * BOUND_DAMPING, shouldApplyBounce);
-
 		float shouldApplySurfaceTension = shouldApplyAnything * floor((step(r, H_SURFACE_TENSION) + particle.IsLiquid()) * 0.5);
 		fsurftens += shouldApplySurfaceTension * diffNormal * VISC_LAP * SURFACE_TENSION_WATER;
+
+		// bounce off frozen particles
+		float shouldApplyBounce = shouldApplyAnything * floor((isTouchingNeighbor + otherParticle.IsSolid()) / 2.0);
+		velocityAndForce.x *= lerp(1.0, diffNormal.x * BOUND_DAMPING, shouldApplyBounce);
+		velocityAndForce.y *= lerp(1.0, diffNormal.y * BOUND_DAMPING, shouldApplyBounce);
 	}
 
-	float2 fgrav = G * particle.density;
-	particle.force = particle.isActive * (fpress + fvisc + fgrav + fsurftens);
 
-	// particle.debug1 = clusterLoad;
-	// particle.debug2 = touchCount;
-	// particle.debug3 = particle.density;
-	// particle.debug4 = particle.pressure;
-	// particle.debug5 = fpress.x;
-	// particle.debug6 = fpress.y;
-	// particle.debug7 = fvisc.x;
-	// particle.debug8 = fvisc.y;
+	particle.force = particle.isActive * (fpress + fvisc + fsurftens + fgrav);
 
+	particlesVelocityAndForce[particleTextureCoords] = velocityAndForce;
 	particles[id.x] = particle;
 }
 
@@ -908,84 +706,51 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 		return;
 	}
 
+	uint2 particleTextureCoords = GetParticleTextureCoords(id.x);
+	float4 velocityAndForce = particlesVelocityAndForce.Load(particleTextureCoords);
+	
+
 	particle.force.x = PreventValueBeingZero(particle.force.x);
 	particle.force.y = PreventValueBeingZero(particle.force.y);
 	particle.density = PreventValueBeingZero(particle.density);
 
 	// forward Euler integration
-	particle.velocity += DT * (particle.force / particle.density);
-	particle.pos += DT * particle.velocity;
-
-	// enforce boundary conditions
-	// int hasHitEdge = 0;
-	// if (particle.pos.x - EPS < 0.0){
-	// 	particle.velocity.x *= BOUND_DAMPING;
-	// 	particle.pos.x = EPS;
-	// 	hasHitEdge = 1;
-	// }
-	// if (particle.pos.x + EPS > GRID_WIDTH_PIXELS){
-	// 	particle.velocity.x *= BOUND_DAMPING;
-	// 	particle.pos.x = GRID_WIDTH_PIXELS - EPS;
-	// 	hasHitEdge = 1;
-	// }
-	// if (particle.pos.y - EPS < 0.0){
-	// 	particle.velocity.y *= BOUND_DAMPING;
-	// 	particle.pos.y = EPS;
-	// 	hasHitEdge = 1;
-	// }
-	// if (particle.pos.y + EPS > GRID_HEIGHT_PIXELS){
-	// 	particle.velocity.y *= BOUND_DAMPING;
-	// 	particle.pos.y = GRID_HEIGHT_PIXELS - EPS;
-	// 	hasHitEdge = 1;
-	// }
+	velocityAndForce.xy += DT * (particle.force / particle.density);
+	particle.pos += DT * velocityAndForce.xy;
 
 	float oldX = particle.pos.x;
 	float oldY = particle.pos.y;
 	particle.pos.x = clamp(particle.pos.x, EPS, GRID_WIDTH_PIXELS - EPS);
 	particle.pos.y = clamp(particle.pos.y, EPS, GRID_HEIGHT_PIXELS - EPS);
 
-	particle.velocity.x *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.x - oldX)), 0, 1));
-	particle.velocity.y *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.y - oldY)), 0, 1));
+	velocityAndForce.x *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.x - oldX)), 0, 1));
+	velocityAndForce.y *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.y - oldY)), 0, 1));
 
-	// float temperature = particle.temperature;
-	// float diffTemperature = temperature - BOUND_TEMPERATURE;
-	// float isBoundaryWarmerThanParticle = clamp(sign(BOUND_TEMPERATURE - temperature), 0, 1);
-	// float exchange = diffTemperature;
-	// exchange *= lerp(particle.GetThermalDiffusivity(), BOUND_THERMAL_DIFFUSIVITY, isBoundaryWarmerThanParticle);
-	// particle.SetTemperature(temperature - exchange * hasHitEdge);
-
-
-	// if(output[particle.pos].a == 0){ // FIX THIS
 	float temp = particle.temperature / MAX_TEMPERATURE;
-	output[particle.pos] = float4(temp, 0, 1 - temp, particle.isActive);// float4(particle.velocity.x * 1000, 0, particle.velocity.y * 1000, particle.isActive);// float4((particle.pos.x / GRID_WIDTH_PIXELS), 0, (particle.pos.y / GRID_HEIGHT_PIXELS), particle.isActive);// float4(0, 0.25, 0.75, particle.isActive);
-	//output[particle.pos] = float4(particle.temperature, 1 - sign(id.x), 1- particle.temperature, particle.isActive);// float4(particle.velocity.x * 1000, 0, particle.velocity.y * 1000, particle.isActive);// float4((particle.pos.x / GRID_WIDTH_PIXELS), 0, (particle.pos.y / GRID_HEIGHT_PIXELS), particle.isActive);// float4(0, 0.25, 0.75, particle.isActive);
+	output[particle.pos] = float4(temp, 0, 1 - temp, particle.isActive);
 
-	//} 
-	particle.binPos = GetBinPos(particle.pos); // for next frame
-	if(particle.binPos.x == debugBinIndexX && particle.binPos.y == debugBinIndexY){ 
-		uint4 contents_0 = bins_00.Load(particle.binPos);
-		uint4 contents_1 = bins_01.Load(particle.binPos);
-		uint4 contents_2 = bins_02.Load(particle.binPos);
-		debugVars[0].SetID(debugBinIndexX, debugBinIndexY);
-
-		debugVars[0].Set(0, round(contents_0.x * particleCount));
-		debugVars[0].Set(1, round(contents_0.y * particleCount));
-		debugVars[0].Set(2, round(contents_0.z * particleCount));
-		debugVars[0].Set(3, round(contents_0.w * particleCount));
-		debugVars[0].Set(4, round(contents_1.x * particleCount));
-		debugVars[0].Set(5, round(contents_1.y * particleCount));
-		debugVars[0].Set(6, round(contents_1.z * particleCount));
-		debugVars[0].Set(7, round(contents_1.w * particleCount));
-		debugVars[0].Set(8, round(contents_2.x * particleCount));
-		debugVars[0].Set(9, round(contents_2.y * particleCount));
-		debugVars[0].Set(10, contents_2.z * particleCount);
-		debugVars[0].Set(11, contents_2.w * particleCount);
+	 // for next frame
+	uint oldBinPosX = particle.binPosX;
+	uint oldBinPosY = particle.binPosY; 
+	particle.binPosX = GetBinPosX(particle.pos);
+	particle.binPosY = GetBinPosY(particle.pos);
+	half isDirty = clamp(signAbs(particle.binPosX - oldBinPosX) + signAbs(particle.binPosY - oldBinPosY), 0.0, 1.0);
+	if(isDirty){ // TODO: is it better/worse to assign this inside an if-statement?
+		binsDirty[uint2(oldBinPosX, oldBinPosY)] = 1.0;
+		binsDirty[uint2(particle.binPosX, particle.binPosY)] = 1.0;
 	}
 
-	particle.temperatureStartFrame = particle.temperature; // for next frame
-	
-	particlesSorted_0[uint2(particle.sortingIndex, 0)] = half3(particle.pos.x, particle.pos.y, id.x);
-	particlesSorted_1[uint2(particle.sortingIndex, 0)] = half3(particle.pos.x, particle.pos.y, id.x);
+	particle.temperatureStartFrame = particle.temperature;
+	particle.particlesToHeat.xyzw = 0.0;
+	particle.heatToGive.xyzw = 0.0;
+
+	// particle.debug1 = velocityAndForce.x;
+	// particle.debug2 = velocityAndForce.y;
+	// particle.debug3 = velocityAndForce.z;
+	// particle.debug4 = velocityAndForce.w;
+	// velocityAndForce.z = 1.0;
+	// velocityAndForce.w = 1.0;
+	particlesVelocityAndForce[particleTextureCoords] = float4(4, 3, 2, 1);// velocityAndForce;
 
 	particles[id.x] = particle;
 }
