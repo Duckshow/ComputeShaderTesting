@@ -1,4 +1,6 @@
 ﻿#pragma kernel Init
+#pragma kernel TestWrite
+#pragma kernel TestRead
 #pragma kernel ClearOutputTexture
 #pragma kernel CacheParticlesInBins
 #pragma kernel ComputeDensity
@@ -46,12 +48,12 @@ static const float REPEL_STRENGTH_SMOOTHING_START_SOLID = 0.9;
 
 static const float ALMOST_BUT_NOT_QUITE_ZERO = 0.00001; // used to prevent division by zero
 
-static const int TEXTURE_AXIS_MAX = 16384;
 
 //#region[rgba(80, 0, 0, 1)] | WARNING: shared with ElementSimulator.cs! must be equal!
-static const int START_PARTICLE_COUNT = 8192; // must be divisible by THREAD_COUNT_X!
-static const int START_PARTICLE_COUNT_ACTIVE = 8192;
+static const int START_PARTICLE_COUNT = 32768; // must be divisible by THREAD_COUNT_X!
+static const int START_PARTICLE_COUNT_ACTIVE = 32768;
 
+static const int TEXTURE_AXIS_MAX = 16384;
 static const uint PARTICLE_TEXTURE_SIZE_X = min(START_PARTICLE_COUNT_ACTIVE, TEXTURE_AXIS_MAX);
 static const uint PARTICLE_TEXTURE_SIZE_Y = min((START_PARTICLE_COUNT_ACTIVE - (START_PARTICLE_COUNT_ACTIVE % PARTICLE_TEXTURE_SIZE_X)) / PARTICLE_TEXTURE_SIZE_X, TEXTURE_AXIS_MAX);
 
@@ -71,10 +73,10 @@ static const uint BIN_SIZE = 8;
 static const uint BIN_COUNT_X = GRID_WIDTH_PIXELS / BIN_SIZE;
 static const uint BIN_COUNT_Y = GRID_HEIGHT_PIXELS / BIN_SIZE;
 static const uint BIN_MAX_AMOUNT_OF_CONTENT = 12;
-//#endregion
-
 static const uint BIN_CLUSTER_SIZE = 5;
 static const uint BIN_CLUSTER_CONTENT_MAX = BIN_CLUSTER_SIZE * BIN_MAX_AMOUNT_OF_CONTENT;
+//#endregion
+
 
 static const int ELEMENT_COUNT = 1;
 
@@ -295,10 +297,6 @@ RWTexture2D<uint4> bins_01;
 RWTexture2D<uint4> bins_02;
 
 RWTexture2D<float4> particlesVelocityAndForce;
-// RWTexture2D<float4> particlesDensityPressureTemperatureAndRepel;
-// RWTexture2D<float4> particlesHeatExchange;
-// RWTexture2D<float4> particlesHeatIndices;
-// RWTexture2D<uint2> particlesBins;
 
 RWTexture2D<float4> output;
 half isFirstFrame;
@@ -307,7 +305,7 @@ half isFirstFrame;
 
 uint2 GetParticleTextureCoords(uint particleIndex){
 	uint x = particleIndex % PARTICLE_TEXTURE_SIZE_X;
-	uint y = floor((particleIndex - x) / half(PARTICLE_TEXTURE_SIZE_Y));
+	uint y = floor((particleIndex - x) / half(PARTICLE_TEXTURE_SIZE_X));
 	return uint2(x, y);
 }
 
@@ -422,6 +420,23 @@ void Init(uint3 id : SV_DispatchThreadID) {
 	particle.binPosY = GetBinPosY(particle.pos);
 	particle.SetTemperature(particle.temperatureStartFrame);
 	particles[id.x] = particle;
+}
+
+[numthreads(THREAD_COUNT_X, 1, 1)]
+void TestWrite(uint3 id : SV_DispatchThreadID){
+	// particlesVelocityAndForce[id.xy] = uint4(4, 3, 2, 1);
+}
+
+[numthreads(THREAD_COUNT_X, 1, 1)]
+void TestRead(uint3 id : SV_DispatchThreadID){
+	// uint4 result = particlesVelocityAndForce.Load(id.xy);
+
+	// Particle particle = particles[id.x];
+	// particle.debug1 = 22;// result.x;
+	// particle.debug2 = 22;// result.y;
+	// particle.debug3 = 22;// result.z;
+	// particle.debug4 = 22;// result.w;
+	// particles[id.x] = particle;
 }
 
 // called continuosly
@@ -646,12 +661,8 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 	}
 
 	uint2 particleTextureCoords = GetParticleTextureCoords(id.x);
-	float4 velocityAndForce = particlesVelocityAndForce.Load(particleTextureCoords);
-
-	particle.debug1 = velocityAndForce.x;
-	particle.debug2 = velocityAndForce.y;
-	particle.debug3 = velocityAndForce.z;
-	particle.debug4 = velocityAndForce.w;
+	// particlesVelocityAndForce[particleTextureCoords] = float4(4, 3, 2, 1);
+	float2 velocity = particlesVelocityAndForce.Load(particleTextureCoords).xy;
 
 	float2 fpress = float2(0.0, 0.0);
 	float2 fvisc = float2(0.0, 0.0);
@@ -667,7 +678,7 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 	
 		Particle otherParticle = particles[neighborIndex];
 		uint2 otherParticleTextureCoords = GetParticleTextureCoords(neighborIndex);
-		float4 otherVelocityAndForce = particlesVelocityAndForce.Load(otherParticleTextureCoords);
+		float2 otherVelocity = particlesVelocityAndForce.Load(otherParticleTextureCoords).xy;
 
 		float2 diff = PreventValueBeingZero(otherParticle.pos - particle.pos);
 		float2 diffNormal = normalize(diff);
@@ -681,21 +692,21 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 		// compute pressure force contribution
 		fpress += shouldApplyAnything * -diffNormal * otherParticle.GetMass() * (particle.pressure + otherParticle.pressure) / (2.0 * otherParticle.density) * SPIKY_GRAD * pow(H - r, 2.0) * CLUSTERING_RESISTANCE;
 		// compute viscosity force contribution
-		fvisc += shouldApplyAnything * otherParticle.GetViscosity() * otherParticle.GetMass() * (otherVelocityAndForce.xy - velocityAndForce.xy) / otherParticle.density * VISC_LAP * (H - r);
+		fvisc += shouldApplyAnything * otherParticle.GetViscosity() * otherParticle.GetMass() * (otherVelocity - velocity) / otherParticle.density * VISC_LAP * (H - r);
 		
 		float shouldApplySurfaceTension = shouldApplyAnything * floor((step(r, H_SURFACE_TENSION) + particle.IsLiquid()) * 0.5);
 		fsurftens += shouldApplySurfaceTension * diffNormal * VISC_LAP * SURFACE_TENSION_WATER;
 
 		// bounce off frozen particles
 		float shouldApplyBounce = shouldApplyAnything * floor((isTouchingNeighbor + otherParticle.IsSolid()) / 2.0);
-		velocityAndForce.x *= lerp(1.0, diffNormal.x * BOUND_DAMPING, shouldApplyBounce);
-		velocityAndForce.y *= lerp(1.0, diffNormal.y * BOUND_DAMPING, shouldApplyBounce);
+		particle.velocity *= lerp(1.0, diffNormal * BOUND_DAMPING, shouldApplyBounce);
+		velocity = particle.velocity;
 	}
-
 
 	particle.force = particle.isActive * (fpress + fvisc + fsurftens + fgrav);
 
-	particlesVelocityAndForce[particleTextureCoords] = velocityAndForce;
+	particlesVelocityAndForce[particleTextureCoords] = float4(velocity.x, velocity.y, 11, 22);
+
 	particles[id.x] = particle;
 }
 
@@ -707,24 +718,28 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 	}
 
 	uint2 particleTextureCoords = GetParticleTextureCoords(id.x);
-	float4 velocityAndForce = particlesVelocityAndForce.Load(particleTextureCoords);
+	float4 result = particlesVelocityAndForce.Load(particleTextureCoords);
+	float2 velocity = result.xy;
 	
+
 
 	particle.force.x = PreventValueBeingZero(particle.force.x);
 	particle.force.y = PreventValueBeingZero(particle.force.y);
 	particle.density = PreventValueBeingZero(particle.density);
 
 	// forward Euler integration
-	velocityAndForce.xy += DT * (particle.force / particle.density);
-	particle.pos += DT * velocityAndForce.xy;
+	particle.velocity += DT * (particle.force / particle.density);
+	velocity = particle.velocity;
+	particle.pos += DT * particle.velocity;
 
 	float oldX = particle.pos.x;
 	float oldY = particle.pos.y;
 	particle.pos.x = clamp(particle.pos.x, EPS, GRID_WIDTH_PIXELS - EPS);
 	particle.pos.y = clamp(particle.pos.y, EPS, GRID_HEIGHT_PIXELS - EPS);
 
-	velocityAndForce.x *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.x - oldX)), 0, 1));
-	velocityAndForce.y *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.y - oldY)), 0, 1));
+	particle.velocity.x *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.x - oldX)), 0, 1));
+	particle.velocity.y *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.y - oldY)), 0, 1));
+	velocity = particle.velocity;
 
 	float temp = particle.temperature / MAX_TEMPERATURE;
 	output[particle.pos] = float4(temp, 0, 1 - temp, particle.isActive);
@@ -744,13 +759,12 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 	particle.particlesToHeat.xyzw = 0.0;
 	particle.heatToGive.xyzw = 0.0;
 
-	// particle.debug1 = velocityAndForce.x;
-	// particle.debug2 = velocityAndForce.y;
-	// particle.debug3 = velocityAndForce.z;
-	// particle.debug4 = velocityAndForce.w;
-	// velocityAndForce.z = 1.0;
-	// velocityAndForce.w = 1.0;
-	particlesVelocityAndForce[particleTextureCoords] = float4(4, 3, 2, 1);// velocityAndForce;
+
+	particle.debug1 = velocity.x;
+	particle.debug2 = velocity.y;
+	particle.debug3 = result.z;
+	particle.debug4 = result.w;
+	particlesVelocityAndForce[particleTextureCoords] = float4(velocity.x, velocity.y, 33, 44); adonadnwoa // it seems that perhaps I've reached a limit to the amount of read/writes?
 
 	particles[id.x] = particle;
 }
