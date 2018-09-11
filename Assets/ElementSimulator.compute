@@ -1,6 +1,4 @@
 ﻿#pragma kernel Init
-#pragma kernel TestWrite
-#pragma kernel TestRead
 #pragma kernel ClearOutputTexture
 #pragma kernel CacheParticlesInBins
 #pragma kernel ComputeDensity
@@ -35,7 +33,7 @@ static const float BOUND_DAMPING = -0.5;
 
 static const float MAX_TEMPERATURE = 1000.0;
 
-static const float THERMAL_DIFFUSIVITY = 0.25;
+static const float THERMAL_DIFFUSIVITY = 0.1;
 static const float REPEL_STRENGTH_MIN = 4.0;
 static const float REPEL_STRENGTH_MAX = 20.0;
 static const float REPEL_FACTOR_MIN = 1.0 / REPEL_STRENGTH_MAX;
@@ -48,14 +46,7 @@ static const float REPEL_STRENGTH_SMOOTHING_START_SOLID = 0.9;
 
 static const float ALMOST_BUT_NOT_QUITE_ZERO = 0.00001; // used to prevent division by zero
 
-
 //#region[rgba(80, 0, 0, 1)] | WARNING: shared with ElementSimulator.cs! must be equal!
-static const int START_PARTICLE_COUNT = 32768; // must be divisible by THREAD_COUNT_X!
-static const int START_PARTICLE_COUNT_ACTIVE = 32768;
-
-static const int TEXTURE_AXIS_MAX = 16384;
-static const uint PARTICLE_TEXTURE_SIZE_X = min(START_PARTICLE_COUNT_ACTIVE, TEXTURE_AXIS_MAX);
-static const uint PARTICLE_TEXTURE_SIZE_Y = min((START_PARTICLE_COUNT_ACTIVE - (START_PARTICLE_COUNT_ACTIVE % PARTICLE_TEXTURE_SIZE_X)) / PARTICLE_TEXTURE_SIZE_X, TEXTURE_AXIS_MAX);
 
 static const int OUTPUT_THREAD_COUNT_X = 32;
 static const int OUTPUT_THREAD_COUNT_Y = 32;
@@ -63,9 +54,10 @@ static const int OUTPUT_THREAD_COUNT_Y = 32;
 static const int BINS_THREAD_COUNT_X = 32;
 static const int BINS_THREAD_COUNT_Y = 32;
 
-static const int THREAD_COUNT_X = 64; // TODO: this can in theory go up to 1024 - make it happen!
+
+static const int THREAD_COUNT_X = 128; // TODO: this can in theory go up to 1024 - make it happen!
 static const uint PIXELS_PER_TILE_EDGE = 32;
-static const uint GRID_WIDTH_TILES = 32;
+static const uint GRID_WIDTH_TILES = 8;
 static const uint GRID_HEIGHT_TILES = 32;
 static const uint GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
 static const uint GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
@@ -296,18 +288,8 @@ RWTexture2D<uint4> bins_00;
 RWTexture2D<uint4> bins_01;
 RWTexture2D<uint4> bins_02;
 
-RWTexture2D<float4> particlesVelocityAndForce;
-
 RWTexture2D<float4> output;
 half isFirstFrame;
-
-// optimization: not accessing particles other than yourself could be worth looking into
-
-uint2 GetParticleTextureCoords(uint particleIndex){
-	uint x = particleIndex % PARTICLE_TEXTURE_SIZE_X;
-	uint y = floor((particleIndex - x) / half(PARTICLE_TEXTURE_SIZE_X));
-	return uint2(x, y);
-}
 
 uint GetBinPosX(float2 pos) {
 	return floor(pos.x / BIN_SIZE);
@@ -422,23 +404,6 @@ void Init(uint3 id : SV_DispatchThreadID) {
 	particles[id.x] = particle;
 }
 
-[numthreads(THREAD_COUNT_X, 1, 1)]
-void TestWrite(uint3 id : SV_DispatchThreadID){
-	// particlesVelocityAndForce[id.xy] = uint4(4, 3, 2, 1);
-}
-
-[numthreads(THREAD_COUNT_X, 1, 1)]
-void TestRead(uint3 id : SV_DispatchThreadID){
-	// uint4 result = particlesVelocityAndForce.Load(id.xy);
-
-	// Particle particle = particles[id.x];
-	// particle.debug1 = 22;// result.x;
-	// particle.debug2 = 22;// result.y;
-	// particle.debug3 = 22;// result.z;
-	// particle.debug4 = 22;// result.w;
-	// particles[id.x] = particle;
-}
-
 // called continuosly
 [numthreads(OUTPUT_THREAD_COUNT_X, OUTPUT_THREAD_COUNT_Y, 1)]
 void ClearOutputTexture(uint3 id : SV_DispatchThreadID) {
@@ -511,7 +476,7 @@ void ComputeDensity(uint3 id : SV_DispatchThreadID) {
 
 	particle.density = particle.GetMass() * POLY6 * pow(HSQ, 2.0);
 	for (uint i = 0; i < clusterLoad; i++){
-		uint neighborIndex = clusterContents[0];
+		uint neighborIndex = clusterContents[i];
 
 		Particle otherParticle = particles[neighborIndex];
 		float2 dir = otherParticle.pos - particle.pos;
@@ -611,6 +576,7 @@ void ComputeHeat(uint3 id : SV_DispatchThreadID) {
 	heatToGive.y = min(heatToGive.y, heat - heatToGive.x);
 	heatToGive.z = min(heatToGive.z, heat - (heatToGive.x + heatToGive.y));
 	heatToGive.w = min(heatToGive.w, heat - (heatToGive.x + heatToGive.y + heatToGive.z));
+	
 	particle.heatToGive = heatToGive;
 
 	particles[id.x] = particle;
@@ -660,10 +626,6 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 		return;
 	}
 
-	uint2 particleTextureCoords = GetParticleTextureCoords(id.x);
-	// particlesVelocityAndForce[particleTextureCoords] = float4(4, 3, 2, 1);
-	float2 velocity = particlesVelocityAndForce.Load(particleTextureCoords).xy;
-
 	float2 fpress = float2(0.0, 0.0);
 	float2 fvisc = float2(0.0, 0.0);
 	float2 fsurftens = float2(0.0, 0.0);
@@ -677,8 +639,6 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 		uint neighborIndex = clusterContents[i];
 	
 		Particle otherParticle = particles[neighborIndex];
-		uint2 otherParticleTextureCoords = GetParticleTextureCoords(neighborIndex);
-		float2 otherVelocity = particlesVelocityAndForce.Load(otherParticleTextureCoords).xy;
 
 		float2 diff = PreventValueBeingZero(otherParticle.pos - particle.pos);
 		float2 diffNormal = normalize(diff);
@@ -692,7 +652,7 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 		// compute pressure force contribution
 		fpress += shouldApplyAnything * -diffNormal * otherParticle.GetMass() * (particle.pressure + otherParticle.pressure) / (2.0 * otherParticle.density) * SPIKY_GRAD * pow(H - r, 2.0) * CLUSTERING_RESISTANCE;
 		// compute viscosity force contribution
-		fvisc += shouldApplyAnything * otherParticle.GetViscosity() * otherParticle.GetMass() * (otherVelocity - velocity) / otherParticle.density * VISC_LAP * (H - r);
+		fvisc += shouldApplyAnything * otherParticle.GetViscosity() * otherParticle.GetMass() * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
 		
 		float shouldApplySurfaceTension = shouldApplyAnything * floor((step(r, H_SURFACE_TENSION) + particle.IsLiquid()) * 0.5);
 		fsurftens += shouldApplySurfaceTension * diffNormal * VISC_LAP * SURFACE_TENSION_WATER;
@@ -700,12 +660,9 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 		// bounce off frozen particles
 		float shouldApplyBounce = shouldApplyAnything * floor((isTouchingNeighbor + otherParticle.IsSolid()) / 2.0);
 		particle.velocity *= lerp(1.0, diffNormal * BOUND_DAMPING, shouldApplyBounce);
-		velocity = particle.velocity;
 	}
 
 	particle.force = particle.isActive * (fpress + fvisc + fsurftens + fgrav);
-
-	particlesVelocityAndForce[particleTextureCoords] = float4(velocity.x, velocity.y, 11, 22);
 
 	particles[id.x] = particle;
 }
@@ -717,19 +674,13 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 		return;
 	}
 
-	uint2 particleTextureCoords = GetParticleTextureCoords(id.x);
-	float4 result = particlesVelocityAndForce.Load(particleTextureCoords);
-	float2 velocity = result.xy;
-	
-
-
 	particle.force.x = PreventValueBeingZero(particle.force.x);
 	particle.force.y = PreventValueBeingZero(particle.force.y);
 	particle.density = PreventValueBeingZero(particle.density);
 
 	// forward Euler integration
 	particle.velocity += DT * (particle.force / particle.density);
-	velocity = particle.velocity;
+	// velocity = particle.velocity;
 	particle.pos += DT * particle.velocity;
 
 	float oldX = particle.pos.x;
@@ -739,9 +690,9 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 
 	particle.velocity.x *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.x - oldX)), 0, 1));
 	particle.velocity.y *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.y - oldY)), 0, 1));
-	velocity = particle.velocity;
+	// velocity = particle.velocity;
 
-	float temp = particle.temperature / MAX_TEMPERATURE;
+	float temp = (particle.temperature / MAX_TEMPERATURE) * 3.0;
 	output[particle.pos] = float4(temp, 0, 1 - temp, particle.isActive);
 
 	 // for next frame
@@ -758,13 +709,6 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 	particle.temperatureStartFrame = particle.temperature;
 	particle.particlesToHeat.xyzw = 0.0;
 	particle.heatToGive.xyzw = 0.0;
-
-
-	particle.debug1 = velocity.x;
-	particle.debug2 = velocity.y;
-	particle.debug3 = result.z;
-	particle.debug4 = result.w;
-	particlesVelocityAndForce[particleTextureCoords] = float4(velocity.x, velocity.y, 33, 44); adonadnwoa // it seems that perhaps I've reached a limit to the amount of read/writes?
 
 	particles[id.x] = particle;
 }
