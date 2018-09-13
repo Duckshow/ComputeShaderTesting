@@ -101,27 +101,27 @@ public class ElementSimulator : MonoBehaviour {
 
 	private const int THREAD_COUNT_MAX = 1024;
 
-	private const int START_PARTICLE_COUNT = 8192; // must be divisible by THREAD_COUNT_X!
-	private const int START_PARTICLE_COUNT_ACTIVE = 8192;
+	private const int START_PARTICLE_COUNT = 65536; // must be divisible by THREAD_COUNT_X!
+	private const int START_PARTICLE_COUNT_ACTIVE = 65536;
 	
 	//#region[rgba(80, 0, 0, 1)] | WARNING: shared with ElementSimulator.compute! must be equal!
 
 	private const int OUTPUT_THREAD_COUNT_X = 32;
 	private const int OUTPUT_THREAD_COUNT_Y = 32;
 
-	private const int BINS_THREAD_COUNT_X = 32;
-	private const int BINS_THREAD_COUNT_Y = 32;
+	private const int BINS_THREAD_COUNT_X = 16;
+	private const int BINS_THREAD_COUNT_Y = 16;
 
 	private const int THREAD_COUNT_X = 64;
 	private const int PIXELS_PER_TILE_EDGE = 32;
-	private const int GRID_WIDTH_TILES = 8;
-	private const int GRID_HEIGHT_TILES = 32;
+	private const int GRID_WIDTH_TILES = 64;
+	private const int GRID_HEIGHT_TILES = 64;
 	private const int GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
 	private const int GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
 	private const int BIN_SIZE = 8;
 	private const int BIN_COUNT_X = GRID_WIDTH_PIXELS / BIN_SIZE;
 	private const int BIN_COUNT_Y = GRID_HEIGHT_PIXELS / BIN_SIZE;
-	private const int BIN_MAX_AMOUNT_OF_CONTENT = 12;
+	private const int BIN_MAX_AMOUNT_OF_CONTENT = 16;
 	private const int BIN_CLUSTER_SIZE = 5;
 	private const int BIN_CLUSTER_CONTENT_MAX = BIN_CLUSTER_SIZE * BIN_MAX_AMOUNT_OF_CONTENT;
 	//#endregion
@@ -157,6 +157,7 @@ public class ElementSimulator : MonoBehaviour {
 	private const string PROPERTY_BINS_00 = "bins_00";
 	private const string PROPERTY_BINS_01 = "bins_01";
 	private const string PROPERTY_BINS_02 = "bins_02";
+	private const string PROPERTY_BINS_03 = "bins_03";
 
 	private const string PROPERTY_OUTPUT = "output";
 	private const string PROPERTY_ISFIRSTFRAME = "isFirstFrame";
@@ -171,6 +172,7 @@ public class ElementSimulator : MonoBehaviour {
 	private int shaderPropertyID_bins_00;
 	private int shaderPropertyID_bins_01;
 	private int shaderPropertyID_bins_02;
+	private int shaderPropertyID_bins_03;
 
 	private int shaderPropertyID_output;
 	private int shaderPropertyID_isFirstFrame;
@@ -178,7 +180,7 @@ public class ElementSimulator : MonoBehaviour {
 	private float updateInterval = 0.0f;
 	private float nextTimeToUpdate = 0.0f;
 
-	private float updateIntervalBins = 0.1f;
+	private float updateIntervalBins = 0.1f;// 0.075f;
 	private float nextTimeToUpdateBins = 0.0f;
 
 	private float updateIntervalHeat = 0.5f;
@@ -195,6 +197,7 @@ public class ElementSimulator : MonoBehaviour {
 	private RenderTexture bins_00;
 	private RenderTexture bins_01;
 	private RenderTexture bins_02;
+	private RenderTexture bins_03;
 
 	private RenderTexture output;
 	private Vector2[] uvs;
@@ -289,6 +292,7 @@ public class ElementSimulator : MonoBehaviour {
 		shaderPropertyID_bins_00 = Shader.PropertyToID(PROPERTY_BINS_00);
 		shaderPropertyID_bins_01 = Shader.PropertyToID(PROPERTY_BINS_01);
 		shaderPropertyID_bins_02 = Shader.PropertyToID(PROPERTY_BINS_02);
+		shaderPropertyID_bins_03 = Shader.PropertyToID(PROPERTY_BINS_03);
 
 		shaderPropertyID_output = Shader.PropertyToID(PROPERTY_OUTPUT);
 		shaderPropertyID_isFirstFrame = Shader.PropertyToID(PROPERTY_ISFIRSTFRAME);
@@ -341,6 +345,12 @@ public class ElementSimulator : MonoBehaviour {
 		bins_02.wrapMode = TextureWrapMode.Clamp;
 		bins_02.Create();
 
+		bins_03 = new RenderTexture(BIN_COUNT_X, BIN_COUNT_Y, 0, RenderTextureFormat.RGBAUShort);
+		bins_03.enableRandomWrite = true;
+		bins_03.filterMode = FilterMode.Point;
+		bins_03.wrapMode = TextureWrapMode.Clamp;
+		bins_03.Create();
+
 		output = new RenderTexture(GRID_WIDTH_PIXELS, GRID_HEIGHT_PIXELS, 24);
 		output.enableRandomWrite = true;
 		output.filterMode = FilterMode.Point;
@@ -350,11 +360,11 @@ public class ElementSimulator : MonoBehaviour {
 		float x = 0, y = 0;
 		for (int i = 0; i < particles.Length; i++){
 			if (i > 0){
-				if (!reverse && i >= particles.Length * 0.5f){
-					reverse = true;
-					y = GRID_HEIGHT_PIXELS;
-					x = GRID_WIDTH_PIXELS - 1;
-				}
+				// if (!reverse && i >= particles.Length * 0.5f){
+				// 	reverse = true;
+				// 	y = GRID_HEIGHT_PIXELS;
+				// 	x = GRID_WIDTH_PIXELS - 1;
+				// }
 
 				float spacing = 4.0f;
 				if (reverse){
@@ -366,7 +376,7 @@ public class ElementSimulator : MonoBehaviour {
 				}
 				else{
 					y += spacing;
-					if (y >= GRID_HEIGHT_PIXELS){
+					if (y >= GRID_HEIGHT_PIXELS * 1.0f){
 						y = spacing * 0.5f;
 						x += spacing;
 					}
@@ -392,7 +402,7 @@ public class ElementSimulator : MonoBehaviour {
 			particle.Pos = new Vector2(x + Random.value * 1.0f, y);
 			//particle.Temperature = Random.Range(0, 1000);
 			//particle.Temperature = x < GRID_WIDTH_PIXELS * 0.5f ? 10000 : 0;
-			particle.Temperature = reverse ? 200 : 300;
+			particle.Temperature = reverse ? 300 : 300;
 			particle.TemperatureStartFrame = particle.Temperature;
 			particle.ElementIndex = 0;
 			particle.IsActive = Mathf.Clamp01(Mathf.Sign(START_PARTICLE_COUNT_ACTIVE - (i + 1)));
@@ -423,7 +433,7 @@ public class ElementSimulator : MonoBehaviour {
 		int outputThreadGroupCountY = Mathf.CeilToInt(GRID_HEIGHT_PIXELS / OUTPUT_THREAD_COUNT_Y);
 		int binsThreadGroupCountX = Mathf.CeilToInt(BIN_COUNT_X / BINS_THREAD_COUNT_X);
 		int binsThreadGroupCountY = Mathf.CeilToInt(BIN_COUNT_Y / BINS_THREAD_COUNT_Y);
-		
+
 		shader.SetFloat(shaderPropertyID_isFirstFrame, isFirstFrame ? 1.0f : 0.0f);
 
 		// Init
@@ -453,6 +463,7 @@ public class ElementSimulator : MonoBehaviour {
 				shader.SetTexture(kernelID_CacheParticlesInBins, shaderPropertyID_bins_00, bins_00);
 				shader.SetTexture(kernelID_CacheParticlesInBins, shaderPropertyID_bins_01, bins_01);
 				shader.SetTexture(kernelID_CacheParticlesInBins, shaderPropertyID_bins_02, bins_02);
+				shader.SetTexture(kernelID_CacheParticlesInBins, shaderPropertyID_bins_03, bins_03);
 			}
 			shader.Dispatch(kernelID_CacheParticlesInBins, binsThreadGroupCountX, binsThreadGroupCountY, 1);
 		}
@@ -464,15 +475,18 @@ public class ElementSimulator : MonoBehaviour {
 			shader.SetTexture(kernelID_ComputeDensity, shaderPropertyID_bins_00, bins_00);
 			shader.SetTexture(kernelID_ComputeDensity, shaderPropertyID_bins_01, bins_01);
 			shader.SetTexture(kernelID_ComputeDensity, shaderPropertyID_bins_02, bins_02);
+			shader.SetTexture(kernelID_ComputeDensity, shaderPropertyID_bins_03, bins_03);
 		}
 		shader.Dispatch	(kernelID_ComputeDensity, particlesThreadGroupCountX, 1, 1);
 
 		// ComputePressure
 		if (isFirstFrame){
+			shader.SetBuffer(kernelID_ComputePressure, shaderPropertyID_particles, bufferParticles);
 			shader.SetTexture(kernelID_ComputePressure, shaderPropertyID_binLoads, binLoads);
 			shader.SetTexture(kernelID_ComputePressure, shaderPropertyID_bins_00, bins_00);
 			shader.SetTexture(kernelID_ComputePressure, shaderPropertyID_bins_01, bins_01);
 			shader.SetTexture(kernelID_ComputePressure, shaderPropertyID_bins_02, bins_02);
+			shader.SetTexture(kernelID_ComputePressure, shaderPropertyID_bins_03, bins_03);
 		}
 		shader.Dispatch(kernelID_ComputePressure, particlesThreadGroupCountX, 1, 1);
 
@@ -481,50 +495,58 @@ public class ElementSimulator : MonoBehaviour {
 
 			// ComputeHeat
 			if (isFirstFrame){
+				shader.SetBuffer(kernelID_ComputeHeat, shaderPropertyID_particles, bufferParticles);
 				shader.SetTexture(kernelID_ComputeHeat, shaderPropertyID_binLoads, binLoads);
 				shader.SetTexture(kernelID_ComputeHeat, shaderPropertyID_bins_00, bins_00);
 				shader.SetTexture(kernelID_ComputeHeat, shaderPropertyID_bins_01, bins_01);
 				shader.SetTexture(kernelID_ComputeHeat, shaderPropertyID_bins_02, bins_02);
+				shader.SetTexture(kernelID_ComputeHeat, shaderPropertyID_bins_03, bins_03);
 			}
 			shader.Dispatch(kernelID_ComputeHeat, particlesThreadGroupCountX, 1, 1);
 
 			// ApplyHeat
 			if (isFirstFrame){
+				shader.SetBuffer(kernelID_ApplyHeat, shaderPropertyID_particles, bufferParticles);
 				shader.SetTexture(kernelID_ApplyHeat, shaderPropertyID_binLoads, binLoads);
 				shader.SetTexture(kernelID_ApplyHeat, shaderPropertyID_bins_00, bins_00);
 				shader.SetTexture(kernelID_ApplyHeat, shaderPropertyID_bins_01, bins_01);
 				shader.SetTexture(kernelID_ApplyHeat, shaderPropertyID_bins_02, bins_02);
+				shader.SetTexture(kernelID_ApplyHeat, shaderPropertyID_bins_03, bins_03);
 			}
 			shader.Dispatch(kernelID_ApplyHeat, particlesThreadGroupCountX, 1, 1);
 		}
 
 		// ComputeForces
 		if (isFirstFrame){
+			shader.SetBuffer(kernelID_ComputeForces, shaderPropertyID_particles, bufferParticles);
 			shader.SetTexture(kernelID_ComputeForces, shaderPropertyID_binLoads, binLoads);
 			shader.SetTexture(kernelID_ComputeForces, shaderPropertyID_bins_00, bins_00);
 			shader.SetTexture(kernelID_ComputeForces, shaderPropertyID_bins_01, bins_01);
 			shader.SetTexture(kernelID_ComputeForces, shaderPropertyID_bins_02, bins_02);
+			shader.SetTexture(kernelID_ComputeForces, shaderPropertyID_bins_03, bins_03);
 		}
 		shader.Dispatch(kernelID_ComputeForces, particlesThreadGroupCountX, 1, 1);
 
 		// Integrate
 		if (isFirstFrame){
+			shader.SetBuffer(kernelID_Integrate, shaderPropertyID_particles, bufferParticles);
 			shader.SetTexture(kernelID_Integrate, shaderPropertyID_binsDirty, binsDirty);
 			shader.SetTexture(kernelID_Integrate, shaderPropertyID_binLoads, binLoads);
 			shader.SetTexture(kernelID_Integrate, shaderPropertyID_bins_00, bins_00);
 			shader.SetTexture(kernelID_Integrate, shaderPropertyID_bins_01, bins_01);
 			shader.SetTexture(kernelID_Integrate, shaderPropertyID_bins_02, bins_02);
+			shader.SetTexture(kernelID_Integrate, shaderPropertyID_bins_03, bins_03);
 			shader.SetTexture(kernelID_Integrate, shaderPropertyID_output, output);
 		}
 		shader.Dispatch(kernelID_Integrate, particlesThreadGroupCountX, 1, 1);
-		bufferParticles.GetData(particles);
 
 		//material.mainTexture = binsDirty;
-		//material.mainTexture = binLoads;
-		//material.mainTexture = bins_00;
+		// material.mainTexture = binLoads;
+		// material.mainTexture = bins_00;
 		material.mainTexture = output;
 
 
+		// bufferParticles.GetData(particles);
 		// ParticleSystem.Particle[] unityParticles = new ParticleSystem.Particle[particles.Length];
 		// int particleCount = particleSys.GetParticles(unityParticles);
 		// for (int i = 0; i < unityParticles.Length; i++){
@@ -539,9 +561,9 @@ public class ElementSimulator : MonoBehaviour {
 		// 	unityParticle.position = worldPos;
 
 		// 	Color color = Color.Lerp(Color.blue, Color.red, particle.Temperature / 1000.0f);
-		// 	if (particleIndex == i){
+		// 	// if (particleIndex == i){
 		// 		color = Color.cyan;
-		// 	}
+		// 	// }
 		// 	// else if (particle.DebugTemp > 0){
 		// 	// 	color = Color.green;
 		// 	// }
@@ -554,7 +576,7 @@ public class ElementSimulator : MonoBehaviour {
 		// particleSys.SetParticles(unityParticles, particleCount);
 
 		// debugVars[0].Print();
-		//PrintParticle();
+		// PrintParticle();
 
 		isFirstFrame = false;
 	}

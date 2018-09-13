@@ -9,18 +9,18 @@
 #pragma kernel Integrate
 
 // solver parameters
-static const float2 G = float2(0, 300 * -9.8); // external (gravitational) forces
-static const float REST_DENS = 250;// 1000; // rest density (basically repel, but slightly different)
+static const float2 G = float2(0, 150 * -9.8); // external (gravitational) forces
+static const float REST_DENS = 300;// 1000; // rest density (basically repel, but slightly different)
 static const float GAS_CONST = 500; // const for equation of state
-static const float H = 1.0; // interaction radius
+static const float H = 0.5; // interaction radius
 static const float HSQ = H * H; // radius^2 for optimization
 static const float HSQ_TEMPERATURE = HSQ * 12.0; // interaction radius
 static const float H_SURFACE_TENSION = H * 12.0; // interaction radius
-static const float MASS = 2.0; // assume all particles have the same mass
+static const float MASS = 0.5; // assume all particles have the same mass
 static const float VISC = 25.0; // viscosity constant
 static const float DT = 0.001;// 0.0008; // integration timestep
-static const float DENSITY_OFFSET = 0.925; // make SPIKY_GRAD apply force earlier (particles don't have to be as close)
-static const float VISC_OFFSET = 0.925; // make VISC_LAP apply force earlier (particles don't have to be as close)
+static const float DENSITY_OFFSET = 0.825; // make SPIKY_GRAD apply force earlier (particles don't have to be as close)
+static const float VISC_OFFSET = 0.825; // make VISC_LAP apply force earlier (particles don't have to be as close)
 static const float PI = 3.14159265359;
 // smoothing kernels defined in Müller and their gradients
 static const float POLY6 = 315.0 / (65.0 * PI * pow(H, 9.0));
@@ -34,12 +34,12 @@ static const float BOUND_DAMPING = -0.5;
 static const float MAX_TEMPERATURE = 1000.0;
 
 static const float THERMAL_DIFFUSIVITY = 0.1;
-static const float REPEL_STRENGTH_MIN = 4.0;
-static const float REPEL_STRENGTH_MAX = 20.0;
+static const float REPEL_STRENGTH_MIN = 10.0;
+static const float REPEL_STRENGTH_MAX = 40.0;
 static const float REPEL_FACTOR_MIN = 1.0 / REPEL_STRENGTH_MAX;
 static const float REPEL_FACTOR_MAX = 1.0 / REPEL_STRENGTH_MIN;
-static const float CLUSTERING_RESISTANCE = 1.0;
-static const float SURFACE_TENSION_WATER = 2500.0;
+static const float CLUSTERING_RESISTANCE = 20.0;
+static const float SURFACE_TENSION_WATER = 25.0;
 
 static const float STATE_CORRECTION_OFFSET = 0.000001; // offset to ensure two states can't be == 1 at the same time
 static const float REPEL_STRENGTH_SMOOTHING_START_SOLID = 0.9;
@@ -51,20 +51,20 @@ static const float ALMOST_BUT_NOT_QUITE_ZERO = 0.00001; // used to prevent divis
 static const int OUTPUT_THREAD_COUNT_X = 32;
 static const int OUTPUT_THREAD_COUNT_Y = 32;
 
-static const int BINS_THREAD_COUNT_X = 32;
-static const int BINS_THREAD_COUNT_Y = 32;
+static const int BINS_THREAD_COUNT_X = 16;
+static const int BINS_THREAD_COUNT_Y = 16;
 
 
-static const int THREAD_COUNT_X = 128; // TODO: this can in theory go up to 1024 - make it happen!
+static const int THREAD_COUNT_X = 64; // TODO: this can in theory go up to 1024 - make it happen!
 static const uint PIXELS_PER_TILE_EDGE = 32;
-static const uint GRID_WIDTH_TILES = 8;
-static const uint GRID_HEIGHT_TILES = 32;
+static const uint GRID_WIDTH_TILES = 64;
+static const uint GRID_HEIGHT_TILES = 64;
 static const uint GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
 static const uint GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
 static const uint BIN_SIZE = 8;
 static const uint BIN_COUNT_X = GRID_WIDTH_PIXELS / BIN_SIZE;
 static const uint BIN_COUNT_Y = GRID_HEIGHT_PIXELS / BIN_SIZE;
-static const uint BIN_MAX_AMOUNT_OF_CONTENT = 12;
+static const uint BIN_MAX_AMOUNT_OF_CONTENT = 16;
 static const uint BIN_CLUSTER_SIZE = 5;
 static const uint BIN_CLUSTER_CONTENT_MAX = BIN_CLUSTER_SIZE * BIN_MAX_AMOUNT_OF_CONTENT;
 //#endregion
@@ -287,6 +287,7 @@ RWTexture2D<half> binLoads;
 RWTexture2D<uint4> bins_00;
 RWTexture2D<uint4> bins_01;
 RWTexture2D<uint4> bins_02;
+RWTexture2D<uint4> bins_03;
 
 RWTexture2D<float4> output;
 half isFirstFrame;
@@ -338,59 +339,50 @@ void GetParticlesInBin(uint2 binPos, out uint binLoad, out uint binParticles[BIN
 		binParticles[10] = binContents.z;
 		binParticles[11] = binContents.w;
 	}
+	if(binLoad > 12){
+		binContents = round(bins_03.Load(binPos));
+		binParticles[12] = binContents.x;
+		binParticles[13] = binContents.y;
+		binParticles[14] = binContents.z;
+		binParticles[15] = binContents.w;
+	}
+}
+
+void AddParticlesFromBinToCluster(uint2 binPos, inout uint clusterLoad, inout uint clusterContent[BIN_CLUSTER_CONTENT_MAX]){
+	uint binLoad;
+	uint binContents[BIN_MAX_AMOUNT_OF_CONTENT];
+	GetParticlesInBin(binPos, binLoad, binContents);
+	for(uint i = 0; i < binLoad; i++, clusterLoad++){
+		clusterContent[clusterLoad] = binContents[i];
+	} 
 }
 
 void GetNeighboringParticles(int particleIndex, uint2 binPos, out uint clusterLoad, out uint clusterContent[BIN_CLUSTER_CONTENT_MAX]){
 
 	// optimization: try seeing if this gets slower or faster with ifs
 
-	uint zero = 0;
-	uint one = 1;
+	uint2 binPos_L = uint2(clamp(binPos.x - 1, 0, BIN_COUNT_X - 1), binPos.y);
+	uint2 binPos_R = uint2(clamp(binPos.x + 1, 0, BIN_COUNT_X - 1), binPos.y);
+	uint2 binPos_B = uint2(binPos.x, clamp(binPos.y - 1, 0, BIN_COUNT_Y - 1));
+	uint2 binPos_T = uint2(binPos.x, clamp(binPos.y + 1, 0, BIN_COUNT_Y - 1));
+	uint2 binPos_BL = uint2(binPos_L.x, binPos_B.y);
+	uint2 binPos_TL = uint2(binPos_L.x, binPos_T.y);
+	uint2 binPos_TR = uint2(binPos_R.x, binPos_T.y);
+	uint2 binPos_BR = uint2(binPos_R.x, binPos_B.y);
 
-	uint2 binPos_L = uint2(clamp(binPos.x - one, zero, BIN_COUNT_X - one), binPos.y);
-	uint2 binPos_R = uint2(clamp(binPos.x + one, zero, BIN_COUNT_X - one), binPos.y);
-	uint2 binPos_B = uint2(binPos.x, clamp(binPos.y - one, zero, BIN_COUNT_Y - one));
-	uint2 binPos_T = uint2(binPos.x, clamp(binPos.y + one, zero, BIN_COUNT_Y - one));
-	
+	clusterLoad = 0;
+	AddParticlesFromBinToCluster(binPos, clusterLoad, clusterContent);
+	AddParticlesFromBinToCluster(binPos_L, clusterLoad, clusterContent);
+	AddParticlesFromBinToCluster(binPos_R, clusterLoad, clusterContent);
+	AddParticlesFromBinToCluster(binPos_T, clusterLoad, clusterContent);
+	AddParticlesFromBinToCluster(binPos_B, clusterLoad, clusterContent);
+	AddParticlesFromBinToCluster(binPos_BL, clusterLoad, clusterContent);
+	AddParticlesFromBinToCluster(binPos_BR, clusterLoad, clusterContent);
+	AddParticlesFromBinToCluster(binPos_TR, clusterLoad, clusterContent);
+	AddParticlesFromBinToCluster(binPos_TL, clusterLoad, clusterContent);
 
-	uint binLoad;
-	uint binContents[BIN_MAX_AMOUNT_OF_CONTENT];
-	uint i = zero;
-	uint iLocal = zero;
-
-	GetParticlesInBin(binPos, binLoad, binContents);
-	clusterLoad = binLoad;
-	for(; i < binLoad; i++){
-		clusterContent[i] = binContents[i];
-	} 
-
-	GetParticlesInBin(binPos_L, binLoad, binContents);
-	clusterLoad += binLoad;
-	for(iLocal = zero; iLocal < binLoad; iLocal++, i++){
-		clusterContent[i] = binContents[iLocal];
-	} 
-
-	GetParticlesInBin(binPos_R, binLoad, binContents);
-	clusterLoad += binLoad;
-	for(iLocal = zero; iLocal < binLoad; iLocal++, i++){
-		clusterContent[i] = binContents[iLocal];
-	} 
-
-	GetParticlesInBin(binPos_T, binLoad, binContents);
-	clusterLoad += binLoad;
-	for(iLocal = zero; iLocal < binLoad; iLocal++, i++){
-		clusterContent[i] = binContents[iLocal];
-	} 
-
-
-	GetParticlesInBin(binPos_B, binLoad, binContents);
-	clusterLoad += binLoad;
-	for(iLocal = zero; iLocal < binLoad; iLocal++, i++){
-		clusterContent[i] = binContents[iLocal];
-	} 
-
-	for(; i < BIN_CLUSTER_CONTENT_MAX; i++){
-		clusterContent[i] = zero;
+	for(uint i = clusterLoad; i < BIN_CLUSTER_CONTENT_MAX; i++){
+		clusterContent[i] = 0;
 	}
 }
 
@@ -419,7 +411,7 @@ void CacheParticlesInBins(uint3 id : SV_DispatchThreadID){
 	}
 
 	half binLoad = 0;
-	half binContent[BIN_MAX_AMOUNT_OF_CONTENT] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+	half binContent[BIN_MAX_AMOUNT_OF_CONTENT] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 	for(uint i = 0; i < particleCount; i++){ // TODO: can we skip particles that have already found their bin?
 		Particle particle = particles[i];
@@ -461,6 +453,14 @@ void CacheParticlesInBins(uint3 id : SV_DispatchThreadID){
 		binContent[11]
 	);
 	bins_02[id.xy] = binContent_02;
+
+	uint4 binContent_03 = uint4(
+		binContent[12],
+		binContent[13],
+		binContent[14],
+		binContent[15]
+	);
+	bins_03[id.xy] = binContent_03;
 }
 
 [numthreads(THREAD_COUNT_X, 1, 1)]
@@ -694,6 +694,7 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 
 	float temp = (particle.temperature / MAX_TEMPERATURE) * 3.0;
 	output[particle.pos] = float4(temp, 0, 1 - temp, particle.isActive);
+	// output[particle.pos] = float4(0, 0, 0, 1);
 
 	 // for next frame
 	uint oldBinPosX = particle.binPosX;
