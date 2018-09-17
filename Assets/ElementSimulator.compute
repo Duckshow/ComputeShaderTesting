@@ -10,17 +10,17 @@
 
 // solver parameters
 static const float2 G = float2(0, 150 * -9.8); // external (gravitational) forces
-static const float REST_DENS = 300;// 1000; // rest density (basically repel, but slightly different)
-static const float GAS_CONST = 500; // const for equation of state
-static const float H = 0.5; // interaction radius
+static const float REST_DENS = 1500;// 300;// 1000; // rest density (basically repel, but slightly different)
+static const float GAS_CONST = 20;// 500; // const for equation of state
+static const float H = 4.0; // interaction radius
 static const float HSQ = H * H; // radius^2 for optimization
 static const float HSQ_TEMPERATURE = HSQ * 12.0; // interaction radius
 static const float H_SURFACE_TENSION = H * 12.0; // interaction radius
-static const float MASS = 0.5; // assume all particles have the same mass
-static const float VISC = 25.0; // viscosity constant
+static const float MASS = 128.0; // assume all particles have the same mass
+static const float VISC = 8.0; // viscosity constant
 static const float DT = 0.001;// 0.0008; // integration timestep
-static const float DENSITY_OFFSET = 0.825; // make SPIKY_GRAD apply force earlier (particles don't have to be as close)
-static const float VISC_OFFSET = 0.825; // make VISC_LAP apply force earlier (particles don't have to be as close)
+static const float DENSITY_OFFSET = 0.9;// 1.0;//0.825; // make SPIKY_GRAD apply force earlier (particles don't have to be as close)
+static const float VISC_OFFSET = 1.0;//1.0;//0.825; // make VISC_LAP apply force earlier (particles don't have to be as close)
 static const float PI = 3.14159265359;
 // smoothing kernels defined in Müller and their gradients
 static const float POLY6 = 315.0 / (65.0 * PI * pow(H, 9.0));
@@ -34,17 +34,18 @@ static const float BOUND_DAMPING = -0.5;
 static const float MAX_TEMPERATURE = 1000.0;
 
 static const float THERMAL_DIFFUSIVITY = 0.1;
-static const float REPEL_STRENGTH_MIN = 10.0;
-static const float REPEL_STRENGTH_MAX = 40.0;
+static const float REPEL_STRENGTH_MIN = 1.0;//10.0;
+static const float REPEL_STRENGTH_MAX = 1.0;//40.0;
 static const float REPEL_FACTOR_MIN = 1.0 / REPEL_STRENGTH_MAX;
 static const float REPEL_FACTOR_MAX = 1.0 / REPEL_STRENGTH_MIN;
-static const float CLUSTERING_RESISTANCE = 20.0;
+static const float CLUSTERING_RESISTANCE = 1.0;//20.0;
 static const float SURFACE_TENSION_WATER = 25.0;
 
 static const float STATE_CORRECTION_OFFSET = 0.000001; // offset to ensure two states can't be == 1 at the same time
 static const float REPEL_STRENGTH_SMOOTHING_START_SOLID = 0.9;
 
 static const float ALMOST_BUT_NOT_QUITE_ZERO = 0.00001; // used to prevent division by zero
+
 
 //#region[rgba(80, 0, 0, 1)] | WARNING: shared with ElementSimulator.cs! must be equal!
 
@@ -57,15 +58,15 @@ static const int BINS_THREAD_COUNT_Y = 16;
 
 static const int THREAD_COUNT_X = 64; // TODO: this can in theory go up to 1024 - make it happen!
 static const uint PIXELS_PER_TILE_EDGE = 32;
-static const uint GRID_WIDTH_TILES = 64;
-static const uint GRID_HEIGHT_TILES = 64;
+static const uint GRID_WIDTH_TILES = 16;
+static const uint GRID_HEIGHT_TILES =16;
 static const uint GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
 static const uint GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
 static const uint BIN_SIZE = 8;
 static const uint BIN_COUNT_X = GRID_WIDTH_PIXELS / BIN_SIZE;
 static const uint BIN_COUNT_Y = GRID_HEIGHT_PIXELS / BIN_SIZE;
 static const uint BIN_MAX_AMOUNT_OF_CONTENT = 16;
-static const uint BIN_CLUSTER_SIZE = 5;
+static const uint BIN_CLUSTER_SIZE = 5; // should be 9 but not sure how to fix
 static const uint BIN_CLUSTER_CONTENT_MAX = BIN_CLUSTER_SIZE * BIN_MAX_AMOUNT_OF_CONTENT;
 //#endregion
 
@@ -495,6 +496,8 @@ void ComputeDensity(uint3 id : SV_DispatchThreadID) {
 void ComputePressure(uint3 id : SV_DispatchThreadID) {
 	Particle particle = particles[id.x];
 	particle.pressure = particle.isActive * GAS_CONST * (particle.density - REST_DENS);
+	particle.debug1 = particle.density;
+	particle.debug2 = particle.pressure;
 	particles[id.x] = particle;
 }
 
@@ -680,8 +683,12 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 
 	// forward Euler integration
 	particle.velocity += DT * (particle.force / particle.density);
-	// velocity = particle.velocity;
 	particle.pos += DT * particle.velocity;
+
+	// if(isFirstFrame) particle.velocity += (particle.force / particle.GetMass()) * DT * 0.5;
+	// particle.pos += DT * particle.velocity;
+	// float2 acceleration = particle.force / particle.GetMass();
+	// particle.velocity += DT * acceleration;
 
 	float oldX = particle.pos.x;
 	float oldY = particle.pos.y;
@@ -693,8 +700,8 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 	// velocity = particle.velocity;
 
 	float temp = (particle.temperature / MAX_TEMPERATURE) * 3.0;
-	output[particle.pos] = float4(temp, 0, 1 - temp, particle.isActive);
-	// output[particle.pos] = float4(0, 0, 0, 1);
+	// output[particle.pos] = float4(temp, 0, 1 - temp, particle.isActive);
+	output[particle.pos] = float4(0, 0, 0, 1);
 
 	 // for next frame
 	uint oldBinPosX = particle.binPosX;
