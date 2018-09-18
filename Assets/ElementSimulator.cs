@@ -101,8 +101,8 @@ public class ElementSimulator : MonoBehaviour {
 
 	private const int THREAD_COUNT_MAX = 1024;
 
-	private const int START_PARTICLE_COUNT = 8129; // must be divisible by THREAD_COUNT_X!
-	private const int START_PARTICLE_COUNT_ACTIVE = 8192;
+	private const int START_PARTICLE_COUNT = 16384; // must be divisible by THREAD_COUNT_X!
+	private const int START_PARTICLE_COUNT_ACTIVE = 16384;
 	
 	//#region[rgba(80, 0, 0, 1)] | WARNING: shared with ElementSimulator.compute! must be equal!
 
@@ -114,8 +114,8 @@ public class ElementSimulator : MonoBehaviour {
 
 	private const int THREAD_COUNT_X = 64;
 	private const int PIXELS_PER_TILE_EDGE = 32;
-	private const int GRID_WIDTH_TILES = 16;
-	private const int GRID_HEIGHT_TILES = 16;
+	private const int GRID_WIDTH_TILES = 32;
+	private const int GRID_HEIGHT_TILES = 32;
 	private const int GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
 	private const int GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
 	private const int BIN_SIZE = 8;
@@ -180,7 +180,7 @@ public class ElementSimulator : MonoBehaviour {
 	private float updateInterval = 0.0f;
 	private float nextTimeToUpdate = 0.0f;
 
-	private float updateIntervalBins = 0.1f;// 0.075f;
+	private float updateIntervalBins = 0.0f;// 0.075f;// 0.075f;
 	private float nextTimeToUpdateBins = 0.0f;
 
 	private float updateIntervalHeat = 0.5f;
@@ -367,34 +367,34 @@ public class ElementSimulator : MonoBehaviour {
 				// }
 
 				float spacing = 4.0f;
-				if (reverse){
-					y -= spacing;
-					if (y < 0){
-						y = GRID_HEIGHT_PIXELS - 1 - spacing * 0.5f;
-						x -= spacing;
-					}
-				}
-				else{
-					y += spacing;
-					if (y >= GRID_HEIGHT_PIXELS * 1.0f){
-						y = spacing * 0.5f;
-						x += spacing;
-					}
-				}
 				// if (reverse){
-				// 	x -= spacing;
-				// 	if (x < 0){
-				// 		x = GRID_WIDTH_PIXELS - 1 - spacing * 0.5f;
-				// 		y -= spacing;
+				// 	y -= spacing;
+				// 	if (y < 0){
+				// 		y = GRID_HEIGHT_PIXELS - 1 - spacing * 0.5f;
+				// 		x -= spacing;
 				// 	}
 				// }
 				// else{
-				// 	x += spacing;
-				// 	if (x >= GRID_WIDTH_PIXELS){
-				// 		x = spacing * 0.5f;
-				// 		y += spacing;
+				// 	y += spacing;
+				// 	if (y >= GRID_HEIGHT_PIXELS * 1.0f){
+				// 		y = spacing * 0.5f;
+				// 		x += spacing;
 				// 	}
 				// }
+				if (reverse){
+					x -= spacing;
+					if (x < 0){
+						x = GRID_WIDTH_PIXELS - 1 - spacing * 0.5f;
+						y -= spacing;
+					}
+				}
+				else{
+					x += spacing;
+					if (x >= GRID_WIDTH_PIXELS){
+						x = spacing * 0.5f;
+						y += spacing;
+					}
+				}
 			}
 
 			Particle particle = particles[i];
@@ -435,6 +435,7 @@ public class ElementSimulator : MonoBehaviour {
 		int binsThreadGroupCountY = Mathf.CeilToInt(BIN_COUNT_Y / BINS_THREAD_COUNT_Y);
 
 		shader.SetFloat(shaderPropertyID_isFirstFrame, isFirstFrame ? 1.0f : 0.0f);
+		shader.SetFloat("debugIndex", particleIndex);
 
 		// Init
 		if (isFirstFrame){
@@ -546,34 +547,34 @@ public class ElementSimulator : MonoBehaviour {
 		material.mainTexture = output;
 
 
-		bufferParticles.GetData(particles);
-		ParticleSystem.Particle[] unityParticles = new ParticleSystem.Particle[particles.Length];
-		int particleCount = particleSys.GetParticles(unityParticles);
-		for (int i = 0; i < unityParticles.Length; i++){
-			Particle particle = particles[i];
-			ParticleSystem.Particle unityParticle = unityParticles[i];
+		// bufferParticles.GetData(particles);
+		// ParticleSystem.Particle[] unityParticles = new ParticleSystem.Particle[particles.Length];
+		// int particleCount = particleSys.GetParticles(unityParticles);
+		// for (int i = 0; i < unityParticles.Length; i++){
+		// 	Particle particle = particles[i];
+		// 	ParticleSystem.Particle unityParticle = unityParticles[i];
 
-			Vector2 worldPos = particle.Pos;
-			worldPos.x = worldPos.x / GRID_WIDTH_PIXELS * GRID_WIDTH_TILES;
-			worldPos.y = worldPos.y / GRID_HEIGHT_PIXELS * GRID_HEIGHT_TILES;
-			worldPos.x -= GRID_WIDTH_TILES * 0.5f;
-			worldPos.y -= GRID_HEIGHT_TILES * 0.5f;
-			unityParticle.position = worldPos;
+		// 	Vector2 worldPos = particle.Pos;
+		// 	worldPos.x = worldPos.x / GRID_WIDTH_PIXELS * GRID_WIDTH_TILES;
+		// 	worldPos.y = worldPos.y / GRID_HEIGHT_PIXELS * GRID_HEIGHT_TILES;
+		// 	worldPos.x -= GRID_WIDTH_TILES * 0.5f;
+		// 	worldPos.y -= GRID_HEIGHT_TILES * 0.5f;
+		// 	unityParticle.position = worldPos;
 
-			Color color = Color.red;// Color.Lerp(Color.blue, Color.red, particle.Temperature / 1000.0f);
-			if (particleIndex == i){
-				color = Color.cyan;
-			}
-			// else if (particle.DebugTemp > 0){
-			// 	color = Color.green;
-			// }
+		// 	Color color = Color.red;// Color.Lerp(Color.blue, Color.red, particle.Temperature / 1000.0f);
+		// 	if (particleIndex == i){
+		// 		color = Color.cyan;
+		// 	}
+		// 	else if (particle.Debug1 > 0){
+		// 		color = Color.green;
+		// 	}
 
-			color.a = particle.IsActive;
-			unityParticle.startColor = color;
+		// 	color.a = particle.IsActive;
+		// 	unityParticle.startColor = color;
 
-			unityParticles[i] = unityParticle;
-		}
-		particleSys.SetParticles(unityParticles, particleCount);
+		// 	unityParticles[i] = unityParticle;
+		// }
+		// particleSys.SetParticles(unityParticles, particleCount);
 
 		// debugVars[0].Print();
 		// PrintParticle();
