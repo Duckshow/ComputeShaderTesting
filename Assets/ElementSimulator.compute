@@ -69,7 +69,7 @@ static const uint BIN_SIZE = 8;
 static const uint BIN_COUNT_X = GRID_WIDTH_PIXELS / BIN_SIZE;
 static const uint BIN_COUNT_Y = GRID_HEIGHT_PIXELS / BIN_SIZE;
 static const uint BIN_MAX_AMOUNT_OF_CONTENT = 16;
-static const uint BIN_CLUSTER_SIZE = 5; // should be 9 but not sure how to fix
+static const uint BIN_CLUSTER_SIZE = 9; // should be 9 but not sure how to fix
 static const uint BIN_CLUSTER_CONTENT_MAX = BIN_CLUSTER_SIZE * BIN_MAX_AMOUNT_OF_CONTENT;
 //#endregion
 
@@ -236,55 +236,57 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 	}
 };
 
-// struct DebugVars{ // WARNING: variables must correspond to ElementSimulator.compute's Particle!
-// 	half2 debugID;
-// 	half debug_00;
-// 	half debug_01;
-// 	half debug_02;
-// 	half debug_03;
-// 	half debug_04;
-// 	half debug_05;
-// 	half debug_06;
-// 	half debug_07;
-// 	half debug_08;
-// 	half debug_09;
-// 	half debug_10;
-// 	half debug_11;
-// 	half debug_12;
-// 	half debug_13;
-// 	half debug_14;
+struct DebugVars{ // WARNING: variables must correspond to ElementSimulator.compute's Particle!
+	half hasNewValue;
+	half2 debugID;
+	half debug_00;
+	half debug_01;
+	half debug_02;
+	half debug_03;
+	half debug_04;
+	half debug_05;
+	half debug_06;
+	half debug_07;
+	half debug_08;
+	half debug_09;
+	half debug_10;
+	half debug_11;
+	half debug_12;
+	half debug_13;
+	half debug_14;
 
-// 	void SetID(half id1, half id2){
-// 		debugID.x = id1;
-// 		debugID.y = id2;
-// 	}
+	void SetID(half id1, half id2){
+		debugID.x = id1;
+		debugID.y = id2;
+	}
 
-// 	void Set(uint index, float val){
-// 		if(index == 0) debug_00 = val;
-// 		else if(index == 1) debug_01 = val;
-// 		else if(index == 2) debug_02 = val;
-// 		else if(index == 3) debug_03 = val;
-// 		else if(index == 4) debug_04 = val;
-// 		else if(index == 5) debug_05 = val;
-// 		else if(index == 6) debug_06 = val;
-// 		else if(index == 7) debug_07 = val;
-// 		else if(index == 8) debug_08 = val;
-// 		else if(index == 9) debug_09 = val;
-// 		else if(index == 10) debug_10 = val;
-// 		else if(index == 11) debug_11 = val;
-// 		else if(index == 12) debug_12 = val;
-// 		else if(index == 13) debug_13 = val;
-// 		else if(index == 14) debug_14 = val;
-// 		//else hasNewValue = 0;
-// 	}
-// };
+	void Set(uint index, float val){
+		hasNewValue = 1;
+
+		if(index == 0) debug_00 = val;
+		else if(index == 1) debug_01 = val;
+		else if(index == 2) debug_02 = val;
+		else if(index == 3) debug_03 = val;
+		else if(index == 4) debug_04 = val;
+		else if(index == 5) debug_05 = val;
+		else if(index == 6) debug_06 = val;
+		else if(index == 7) debug_07 = val;
+		else if(index == 8) debug_08 = val;
+		else if(index == 9) debug_09 = val;
+		else if(index == 10) debug_10 = val;
+		else if(index == 11) debug_11 = val;
+		else if(index == 12) debug_12 = val;
+		else if(index == 13) debug_13 = val;
+		else if(index == 14) debug_14 = val;
+	}
+};
 
 
 RWStructuredBuffer<Particle> particles;
 uniform uint particleCount;
 // uniform int debugBinIndexX;
 // uniform int debugBinIndexY;
-// RWStructuredBuffer<DebugVars> debugVars;
+RWStructuredBuffer<DebugVars> debugVars;
 
 RWTexture2D<half> binsDirty;
 RWTexture2D<half> binLoads;
@@ -305,11 +307,11 @@ uniform uint debugIndex;
 
 
 int ConvertTwoU16ToOneI32(uint firstU16, uint secondU16){
-	return ((firstU16 << 16) | secondU16) - HIGHEST_VALUE_16BIT;
+	return ((firstU16 << 16) | secondU16);// - HIGHEST_VALUE_16BIT;
 }
 
 void ConvertOneI32ToTwoU16(int i32, out uint firstU16, out uint secondU16){
-	uint u32 = i32 + HIGHEST_VALUE_16BIT;
+	uint u32 = i32;// + HIGHEST_VALUE_16BIT;
 	firstU16 = (u32 >> 16);
 	secondU16 = u32 & 0xFFFF;
 }
@@ -507,6 +509,8 @@ void CacheParticlesInBins(uint3 id : SV_DispatchThreadID){
 			return;
 		}
 	}
+	uint clusterLoad;
+	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
 
 	uint binLoad = 0;
 	uint binContents[BIN_MAX_AMOUNT_OF_CONTENT] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -521,8 +525,6 @@ void CacheParticlesInBins(uint3 id : SV_DispatchThreadID){
 		}
 	}
 	else{
-		uint clusterLoad;
-		uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
 		GetNeighboringParticles(id.xy, clusterLoad, clusterContents);
 		for(uint i = 0; i < clusterLoad; i++){
 			uint particleIndex = clusterContents[i];
@@ -533,7 +535,32 @@ void CacheParticlesInBins(uint3 id : SV_DispatchThreadID){
 				binLoad = min(binLoad + 1, BIN_MAX_AMOUNT_OF_CONTENT);
 			}
 		}
+		// if(id.x == 20 && id.y == 20){
+		// 	debugVars[0].SetID(id.x, id.y);
+		// 	debugVars[0].Set(0, binLoad);
+		// 	debugVars[0].Set(1, clusterLoad);
+		// 	debugVars[0].Set(2, clusterContents[0]);
+		// 	debugVars[0].Set(3, clusterContents[1]);
+		// 	debugVars[0].Set(4, clusterContents[2]);
+		// 	debugVars[0].Set(5, clusterContents[3]);
+		// 	debugVars[0].Set(6, clusterContents[4]);
+		// 	debugVars[0].Set(7, clusterContents[5]);
+		// 	debugVars[0].Set(8, clusterContents[6]);
+		// }
 	}
+
+	// if(id.x == 20 && id.y == 20){
+	// 	debugVars[0].SetID(id.x, id.y);
+	// 	debugVars[0].Set(0, binLoad);
+	// 	debugVars[0].Set(1, clusterLoad);
+	// 	debugVars[0].Set(2, clusterContents[0]);
+	// 	debugVars[0].Set(3, clusterContents[1]);
+	// 	debugVars[0].Set(4, clusterContents[2]);
+	// 	debugVars[0].Set(5, clusterContents[3]);
+	// 	debugVars[0].Set(6, clusterContents[4]);
+	// 	debugVars[0].Set(7, clusterContents[5]);
+	// 	debugVars[0].Set(8, clusterContents[6]);
+	// }
 
 	binLoads[id.xy] = binLoad / half(BIN_MAX_AMOUNT_OF_CONTENT);
 	
@@ -809,7 +836,7 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 	// velocity = particle.velocity;
 
 	float temp = (particle.temperature / MAX_TEMPERATURE) * 3.0;
-	output[particle.pos] = float4(temp, 0, 1 - temp, particle.isActive);
+	output[particle.pos] = id.x == debugIndex ? float4(0.0, 0.5, 1.0, particle.isActive) : float4(temp, 0, 1 - temp, particle.isActive);
 	// output[particle.pos] = float4(0, 0, 0, 1);
 
 

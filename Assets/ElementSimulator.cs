@@ -55,54 +55,58 @@ public class ElementSimulator : MonoBehaviour {
 
 
 
-	// struct DebugVars{ // WARNING: variables must correspond to ElementSimulator.compute's Particle!
-	// 	public Vector2 DebugID;
-	// 	public float Debug_00;
-	// 	public float Debug_01;
-	// 	public float Debug_02;
-	// 	public float Debug_03;
-	// 	public float Debug_04;
-	// 	public float Debug_05;
-	// 	public float Debug_06;
-	// 	public float Debug_07;
-	// 	public float Debug_08;
-	// 	public float Debug_09;
-	// 	public float Debug_10;
-	// 	public float Debug_11;
-	// 	public float Debug_12;
-	// 	public float Debug_13;
-	// 	public float Debug_14;
+	struct DebugVars{ // WARNING: variables must correspond to ElementSimulator.compute's Particle!
+		public float HasNewValue;
+		public Vector2 DebugID;
+		public float Debug_00;
+		public float Debug_01;
+		public float Debug_02;
+		public float Debug_03;
+		public float Debug_04;
+		public float Debug_05;
+		public float Debug_06;
+		public float Debug_07;
+		public float Debug_08;
+		public float Debug_09;
+		public float Debug_10;
+		public float Debug_11;
+		public float Debug_12;
+		public float Debug_13;
+		public float Debug_14;
 
-	// 	public static int GetStride() {
-	// 		return sizeof(float) * 17; // must correspond to variables!
-	// 	}
+		public static int GetStride() {
+			return sizeof(float) * 18; // must correspond to variables!
+		}
 
-	// 	public void Print() {
-	// 		Debug.Log("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-	// 		Debug.Log("ID: " + DebugID);
-	// 		Debug.Log("Debug_00: " + Debug_00);
-	// 		Debug.Log("Debug_01: " + Debug_01);
-	// 		Debug.Log("Debug_02: " + Debug_02);
-	// 		Debug.Log("Debug_03: " + Debug_03);
-	// 		Debug.Log("Debug_04: " + Debug_04);
-	// 		Debug.Log("Debug_05: " + Debug_05);
-	// 		Debug.Log("Debug_06: " + Debug_06);
-	// 		Debug.Log("Debug_07: " + Debug_07);
-	// 		Debug.Log("Debug_08: " + Debug_08);
-	// 		Debug.Log("Debug_09: " + Debug_09);
-	// 		Debug.Log("Debug_10: " + Debug_10);
-	// 		Debug.Log("Debug_11: " + Debug_11);
-	// 		Debug.Log("Debug_12: " + Debug_12);
-	// 		Debug.Log("Debug_13: " + Debug_13);
-	// 		Debug.Log("Debug_14: " + Debug_14);
-	// 		Debug.Log("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-	// 	}
-	// }
+		public void Print() {
+			if(HasNewValue == 0) return;
+			HasNewValue = 0;
+
+			Debug.Log("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+			Debug.Log("ID: " + DebugID);
+			Debug.Log("Debug_00: " + Debug_00);
+			Debug.Log("Debug_01: " + Debug_01);
+			Debug.Log("Debug_02: " + Debug_02);
+			Debug.Log("Debug_03: " + Debug_03);
+			Debug.Log("Debug_04: " + Debug_04);
+			Debug.Log("Debug_05: " + Debug_05);
+			Debug.Log("Debug_06: " + Debug_06);
+			Debug.Log("Debug_07: " + Debug_07);
+			Debug.Log("Debug_08: " + Debug_08);
+			Debug.Log("Debug_09: " + Debug_09);
+			Debug.Log("Debug_10: " + Debug_10);
+			Debug.Log("Debug_11: " + Debug_11);
+			Debug.Log("Debug_12: " + Debug_12);
+			Debug.Log("Debug_13: " + Debug_13);
+			Debug.Log("Debug_14: " + Debug_14);
+			Debug.Log("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+		}
+	}
 
 	private const int THREAD_COUNT_MAX = 1024;
 
-	private const int START_PARTICLE_COUNT = 16384; // must be divisible by THREAD_COUNT_X!
-	private const int START_PARTICLE_COUNT_ACTIVE = 16384;
+	private const int START_PARTICLE_COUNT = 65536; // must be divisible by THREAD_COUNT_X!
+	private const int START_PARTICLE_COUNT_ACTIVE = 65536;
 	
 	//#region[rgba(80, 0, 0, 1)] | WARNING: shared with ElementSimulator.compute! must be equal!
 
@@ -122,7 +126,7 @@ public class ElementSimulator : MonoBehaviour {
 	private const int BIN_COUNT_X = GRID_WIDTH_PIXELS / BIN_SIZE;
 	private const int BIN_COUNT_Y = GRID_HEIGHT_PIXELS / BIN_SIZE;
 	private const int BIN_MAX_AMOUNT_OF_CONTENT = 16;
-	private const int BIN_CLUSTER_SIZE = 5;
+	private const int BIN_CLUSTER_SIZE = 9;
 	private const int BIN_CLUSTER_CONTENT_MAX = BIN_CLUSTER_SIZE * BIN_MAX_AMOUNT_OF_CONTENT;
 	//#endregion
 
@@ -153,7 +157,7 @@ public class ElementSimulator : MonoBehaviour {
 	private const string PROPERTY_PARTICLECOUNT = "particleCount";
 	// private const string PROPERTY_DEBUGBININDEX_X = "debugBinIndexX";
 	// private const string PROPERTY_DEBUGBININDEX_Y = "debugBinIndexY";
-	// private const string PROPERTY_DEBUGVARS = "debugVars";
+	private const string PROPERTY_DEBUGVARS = "debugVars";
 	private const string PROPERTY_BINSDIRTY = "binsDirty";
 	private const string PROPERTY_BINLOADS = "binLoads";
 	private const string PROPERTY_BINS_01_0 = "bins_01_0";
@@ -173,7 +177,7 @@ public class ElementSimulator : MonoBehaviour {
 	private int shaderPropertyID_particleCount;
 	// private int shaderPropertyID_debugBinIndexX;
 	// private int shaderPropertyID_debugBinIndexY;
-	// private int shaderPropertyID_debugVars;
+	private int shaderPropertyID_debugVars;
 	private int shaderPropertyID_binsDirty;
 	private int shaderPropertyID_binLoads;
 	private int shaderPropertyID_bins_01_0;
@@ -201,8 +205,8 @@ public class ElementSimulator : MonoBehaviour {
 	private ComputeBuffer bufferParticles;
 	private Particle[] particles;
 
-	// private ComputeBuffer bufferDebug;
-	//	private DebugVars[] debugVars;
+	private ComputeBuffer bufferDebug;
+	private DebugVars[] debugVars;
 
 	private RenderTexture binsDirty;
 	private RenderTexture binLoads;
@@ -232,6 +236,25 @@ public class ElementSimulator : MonoBehaviour {
 
 	private bool isFirstFrame = true;
 	private int frame = 0;
+
+	public uint testValue1, testValue2;
+	int ConvertTwoU16ToOneI32(uint firstU16, uint secondU16){
+		return (int)((firstU16 << 16) | secondU16);// - HIGHEST_VALUE_16BIT;
+	}
+
+	void ConvertOneI32ToTwoU16(int i32, out uint firstU16, out uint secondU16){
+		uint u32 = (uint)i32;// + HIGHEST_VALUE_16BIT;
+		firstU16 = (u32 >> 16);
+		secondU16 = u32 & 0xFFFF;
+	}
+	[EasyButtons.Button]
+	public void Test(){
+		int i32 = ConvertTwoU16ToOneI32(testValue1, testValue2);
+		uint result1, result2;
+		ConvertOneI32ToTwoU16(i32, out result1, out result2);
+
+		Debug.Log(i32 + ", " + result1 + ", " + result2);
+	}
 
 	[Space]
 	[SerializeField]
@@ -304,7 +327,7 @@ public class ElementSimulator : MonoBehaviour {
 		shaderPropertyID_particleCount = Shader.PropertyToID(PROPERTY_PARTICLECOUNT);
 		// shaderPropertyID_debugBinIndexX = Shader.PropertyToID(PROPERTY_DEBUGBININDEX_X);
 		// shaderPropertyID_debugBinIndexY = Shader.PropertyToID(PROPERTY_DEBUGBININDEX_Y);
-		//		shaderPropertyID_debugVars = Shader.PropertyToID(PROPERTY_DEBUGVARS);
+		shaderPropertyID_debugVars = Shader.PropertyToID(PROPERTY_DEBUGVARS);
 		shaderPropertyID_binsDirty = Shader.PropertyToID(PROPERTY_BINSDIRTY);
 		shaderPropertyID_binLoads = Shader.PropertyToID(PROPERTY_BINLOADS);
 		shaderPropertyID_bins_01_0 = Shader.PropertyToID(PROPERTY_BINS_01_0);
@@ -323,7 +346,7 @@ public class ElementSimulator : MonoBehaviour {
 
 	void OnDisable(){
 		bufferParticles.Dispose();
-		//bufferDebug.Dispose();
+		bufferDebug.Dispose();
 	}
 	
 	void Start () {
@@ -336,7 +359,7 @@ public class ElementSimulator : MonoBehaviour {
 		transform.localScale = new Vector3(GRID_WIDTH_TILES, GRID_HEIGHT_TILES, 1);
 
 		particles = new Particle[START_PARTICLE_COUNT];
-		// debugVars = new DebugVars[1];
+		debugVars = new DebugVars[1];
 
 		binsDirty = new RenderTexture(BIN_COUNT_X, BIN_COUNT_Y, 0, RenderTextureFormat.R8);
 		binsDirty.enableRandomWrite = true;
@@ -457,7 +480,7 @@ public class ElementSimulator : MonoBehaviour {
 		// 	particles[i].TemperatureStartFrame = 10000;
 		// }
 		bufferParticles = new ComputeBuffer(particles.Length, Particle.GetStride());
-		// bufferDebug = new ComputeBuffer(1, DebugVars.GetStride());
+		bufferDebug = new ComputeBuffer(1, DebugVars.GetStride());
 	}
 
 	void Update() {
@@ -497,6 +520,7 @@ public class ElementSimulator : MonoBehaviour {
 
 			// CacheParticlesInBins
 			if (isFirstFrame){
+				
 				bufferParticles.SetData(particles);
 				shader.SetBuffer(kernelID_CacheParticlesInBins, shaderPropertyID_particles, bufferParticles);
 				shader.SetTexture(kernelID_CacheParticlesInBins, shaderPropertyID_binsDirty, binsDirty);
@@ -510,8 +534,11 @@ public class ElementSimulator : MonoBehaviour {
 				// shader.SetTexture(kernelID_CacheParticlesInBins, shaderPropertyID_bins_02, bins_02);
 				// shader.SetTexture(kernelID_CacheParticlesInBins, shaderPropertyID_bins_03, bins_03);
 			}
+			bufferDebug.SetData(debugVars);
+			shader.SetBuffer(kernelID_CacheParticlesInBins, shaderPropertyID_debugVars, bufferDebug);
 			shader.Dispatch(kernelID_CacheParticlesInBins, binsThreadGroupCountX, binsThreadGroupCountY, 1);
 			shader.Dispatch(kernelID_SetBinsNotDirty, binsThreadGroupCountX, binsThreadGroupCountY, 1);
+			bufferDebug.GetData(debugVars);
 		}
 
 		// ComputeDensity
@@ -645,7 +672,7 @@ public class ElementSimulator : MonoBehaviour {
 		// }
 		// particleSys.SetParticles(unityParticles, particleCount);
 
-		// debugVars[0].Print();
+		debugVars[0].Print();
 		// PrintParticle();
 
 		frame++;
