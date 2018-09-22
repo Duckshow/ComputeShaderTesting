@@ -1,12 +1,15 @@
 ﻿#pragma kernel Init
 #pragma kernel ClearOutputTexture
 #pragma kernel CacheParticlesInBins
+#pragma kernel SetBinsNotDirty
 #pragma kernel ComputeDensity
 #pragma kernel ComputePressure
 #pragma kernel ComputeHeat
 #pragma kernel ApplyHeat
 #pragma kernel ComputeForces
 #pragma kernel Integrate
+
+static const uint HIGHEST_VALUE_16BIT = 32768;
 
 // solver parameters
 static const float2 G = float2(0, 150 * -9.8); // external (gravitational) forces
@@ -18,7 +21,7 @@ static const float HSQ_TEMPERATURE = HSQ * 12.0; // interaction radius
 static const float H_SURFACE_TENSION = H * 12.0; // interaction radius
 static const float MASS = 128.0; // assume all particles have the same mass
 static const float VISC = 6.0; // viscosity constant
-static const float DT = 0.001;// 0.0008; // integration timestep
+static const float DT = 0.0005;// 0.0008; // integration timestep
 static const float DENSITY_OFFSET = 0.9;// 1.0;//0.825; // make SPIKY_GRAD apply force earlier (particles don't have to be as close)
 static const float VISC_OFFSET = 1.0;//1.0;//0.825; // make VISC_LAP apply force earlier (particles don't have to be as close)
 static const float PI = 3.14159265359;
@@ -52,8 +55,8 @@ static const float ALMOST_BUT_NOT_QUITE_ZERO = 0.00001; // used to prevent divis
 static const int OUTPUT_THREAD_COUNT_X = 32;
 static const int OUTPUT_THREAD_COUNT_Y = 32;
 
-static const int BINS_THREAD_COUNT_X = 16;
-static const int BINS_THREAD_COUNT_Y = 16;
+static const int BINS_THREAD_COUNT_X = 8;
+static const int BINS_THREAD_COUNT_Y = 8;
 
 
 static const int THREAD_COUNT_X = 64; // TODO: this can in theory go up to 1024 - make it happen!
@@ -142,21 +145,21 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 	half isActive;  // *
 	half4 particlesToHeat;
 	half4 heatToGive;
-	// half debugTemp;
+	half debugTemp;
 	// half debugThermal;
 	half debug1;
 	half debug2;
 	half debug3;
 	half debug4;
-	// half debug5;
-	// half debug6;
-	// half debug7;
-	// half debug8;
-	// half debug9;
-	// half debug10;
-	// half debug11;
-	// half debug12;
-	// half debug13;
+	half debug5;
+	half debug6;
+	half debug7;
+	half debug8;
+	half debug9;
+	half debug10;
+	half debug11;
+	half debug12;
+	half debug13;
 
 	// 92 byte
 	// half padding_0;
@@ -285,15 +288,65 @@ uniform uint particleCount;
 
 RWTexture2D<half> binsDirty;
 RWTexture2D<half> binLoads;
-RWTexture2D<uint4> bins_00;
-RWTexture2D<uint4> bins_01;
-RWTexture2D<uint4> bins_02;
-RWTexture2D<uint4> bins_03;
+// RWTexture2D<uint4> bins_00;
+// RWTexture2D<uint4> bins_01_0;
+// RWTexture2D<uint4> bins_02;
+// RWTexture2D<uint4> bins_03;
+RWTexture2D<int4> bins_01_0;
+RWTexture2D<int4> bins_01_1;
+RWTexture2D<int4> bins_23_0;
+RWTexture2D<int4> bins_23_1;
 
 RWTexture2D<float4> output;
-half isFirstFrame;
+uniform bool isFirstFrame;
+uniform bool isEvenFrame;
 half abort;
-uint debugIndex;
+uniform uint debugIndex;
+
+
+int ConvertTwoU16ToOneI32(uint firstU16, uint secondU16){
+	return ((firstU16 << 16) | secondU16) - HIGHEST_VALUE_16BIT;
+}
+
+void ConvertOneI32ToTwoU16(int i32, out uint firstU16, out uint secondU16){
+	uint u32 = i32 + HIGHEST_VALUE_16BIT;
+	firstU16 = (u32 >> 16);
+	secondU16 = u32 & 0xFFFF;
+}
+
+int4 ReadBins_01(uint2 texPos){
+	if(isEvenFrame){
+		return bins_01_0.Load(texPos);
+	}
+	else{
+		return bins_01_1.Load(texPos);
+	}
+}
+void WriteBins_01(uint2 texPos, int4 value){
+	if(isEvenFrame){
+		bins_01_1[texPos] = value;
+	}
+	else{
+		bins_01_0[texPos] = value;
+	}
+}
+
+int4 ReadBins_23(uint2 texPos){
+	if(isEvenFrame){
+		return bins_23_0.Load(texPos);
+	}
+	else{
+		return bins_23_1.Load(texPos);
+	}
+}
+void WriteBins_23(uint2 texPos, int4 value){
+	if(isEvenFrame){
+		bins_23_1[texPos] = value;
+	}
+	else{
+		bins_23_0[texPos] = value;
+	}
+}
 
 uint GetBinPosX(float2 pos) {
 	return floor(pos.x / BIN_SIZE);
@@ -304,7 +357,9 @@ uint GetBinPosY(float2 pos) {
 }
 
 void GetParticlesInBin(uint2 binPos, out uint binLoad, out uint binParticles[BIN_MAX_AMOUNT_OF_CONTENT]){
-	binLoad = round(binLoads.Load(binPos) * BIN_MAX_AMOUNT_OF_CONTENT);
+	half isValidX = step(0, binPos.x) * step(binPos.x, BIN_COUNT_X);
+	half isValidY = step(0, binPos.y) * step(binPos.y, BIN_COUNT_Y); 
+	binLoad = isValidX * isValidY * round(binLoads.Load(binPos) * BIN_MAX_AMOUNT_OF_CONTENT);
 
 	uint zero = 0;
 	binParticles[0] = zero;
@@ -320,35 +375,75 @@ void GetParticlesInBin(uint2 binPos, out uint binLoad, out uint binParticles[BIN
 	binParticles[10] = zero;
 	binParticles[11] = zero;
 	
-	uint4 binContents;
+	int4 binContents;
+	uint decompressedU16_0;
+	uint decompressedU16_1;
 	if(binLoad > 0){
-		binContents = round(bins_00.Load(binPos));
-		binParticles[0] = binContents.x;
-		binParticles[1] = binContents.y;
-		binParticles[2] = binContents.z;
-		binParticles[3] = binContents.w;
-	}
-	if(binLoad > 4){
-		binContents = round(bins_01.Load(binPos));
-		binParticles[4] = binContents.x;
-		binParticles[5] = binContents.y;
-		binParticles[6] = binContents.z;
-		binParticles[7] = binContents.w;
+		binContents = ReadBins_01(binPos);
+
+		ConvertOneI32ToTwoU16(binContents.x, decompressedU16_0, decompressedU16_1);
+		binParticles[0] = decompressedU16_0;
+		binParticles[1] = decompressedU16_1;
+
+		ConvertOneI32ToTwoU16(binContents.y, decompressedU16_0, decompressedU16_1);
+		binParticles[2] = decompressedU16_0;
+		binParticles[3] = decompressedU16_1;
+
+		ConvertOneI32ToTwoU16(binContents.z, decompressedU16_0, decompressedU16_1);
+		binParticles[4] = decompressedU16_0;
+		binParticles[5] = decompressedU16_1;
+
+		ConvertOneI32ToTwoU16(binContents.w, decompressedU16_0, decompressedU16_1);
+		binParticles[6] = decompressedU16_0;
+		binParticles[7] = decompressedU16_1;
 	}
 	if(binLoad > 8){
-		binContents = round(bins_02.Load(binPos));
-		binParticles[8] = binContents.x;
-		binParticles[9] = binContents.y;
-		binParticles[10] = binContents.z;
-		binParticles[11] = binContents.w;
+		binContents = ReadBins_23(binPos);
+
+		ConvertOneI32ToTwoU16(binContents.x, decompressedU16_0, decompressedU16_1);
+		binParticles[8] = decompressedU16_0;
+		binParticles[9] = decompressedU16_1;
+
+		ConvertOneI32ToTwoU16(binContents.y, decompressedU16_0, decompressedU16_1);
+		binParticles[10] = decompressedU16_0;
+		binParticles[11] = decompressedU16_1;
+
+		ConvertOneI32ToTwoU16(binContents.z, decompressedU16_0, decompressedU16_1);
+		binParticles[12] = decompressedU16_0;
+		binParticles[13] = decompressedU16_1;
+
+		ConvertOneI32ToTwoU16(binContents.w, decompressedU16_0, decompressedU16_1);
+		binParticles[14] = decompressedU16_0;
+		binParticles[15] = decompressedU16_1;
 	}
-	if(binLoad > 12){
-		binContents = round(bins_03.Load(binPos));
-		binParticles[12] = binContents.x;
-		binParticles[13] = binContents.y;
-		binParticles[14] = binContents.z;
-		binParticles[15] = binContents.w;
-	}
+	// if(binLoad > 0){
+	// 	binContents = round(bins_00.Load(binPos));
+	// 	binParticles[0] = binContents.x;
+	// 	binParticles[1] = binContents.y;
+	// 	binParticles[2] = binContents.z;
+	// 	binParticles[3] = binContents.w;
+	// }
+	// if(binLoad > 4){
+	// 	binContents = round(bins_01_0.Load(binPos));
+	// 	binParticles[4] = binContents.x;
+	// 	binParticles[5] = binContents.y;
+	// 	binParticles[6] = binContents.z;
+	// 	binParticles[7] = binContents.w;
+	// }
+	// if(binLoad > 8){
+	// 	binContents = round(bins_02.Load(binPos));
+	// 	binParticles[8] = binContents.x;
+	// 	binParticles[9] = binContents.y;
+	// 	binParticles[10] = binContents.z;
+	// 	binParticles[11] = binContents.w;
+	// }
+	// if(binLoad > 12){
+	// 	binContents = round(bins_03.Load(binPos));
+	// 	binParticles[12] = binContents.x;
+	// 	binParticles[13] = binContents.y;
+	// 	binParticles[14] = binContents.z;
+	// 	binParticles[15] = binContents.w;
+	// }
 }
 
 void AddParticlesFromBinToCluster(uint2 binPos, inout uint clusterLoad, inout uint clusterContent[BIN_CLUSTER_CONTENT_MAX]){
@@ -364,10 +459,10 @@ void GetNeighboringParticles(uint2 binPos, out uint clusterLoad, out uint cluste
 
 	// optimization: try seeing if this gets slower or faster with ifs
 
-	uint2 binPos_L = uint2(clamp(binPos.x - 1, 0, BIN_COUNT_X - 1), binPos.y);
-	uint2 binPos_R = uint2(clamp(binPos.x + 1, 0, BIN_COUNT_X - 1), binPos.y);
-	uint2 binPos_B = uint2(binPos.x, clamp(binPos.y - 1, 0, BIN_COUNT_Y - 1));
-	uint2 binPos_T = uint2(binPos.x, clamp(binPos.y + 1, 0, BIN_COUNT_Y - 1));
+	uint2 binPos_L = uint2(binPos.x - 1, binPos.y);
+	uint2 binPos_R = uint2(binPos.x + 1, binPos.y);
+	uint2 binPos_B = uint2(binPos.x, binPos.y - 1);
+	uint2 binPos_T = uint2(binPos.x, binPos.y + 1);
 	uint2 binPos_BL = uint2(binPos_L.x, binPos_B.y);
 	uint2 binPos_TL = uint2(binPos_L.x, binPos_T.y);
 	uint2 binPos_TR = uint2(binPos_R.x, binPos_T.y);
@@ -407,49 +502,58 @@ void ClearOutputTexture(uint3 id : SV_DispatchThreadID) {
 
 [numthreads(BINS_THREAD_COUNT_X, BINS_THREAD_COUNT_Y, 1)]
 void CacheParticlesInBins(uint3 id : SV_DispatchThreadID){
-	half isDirty = max(isFirstFrame, binsDirty.Load(id.xy));
-	binsDirty[id.xy] = 0.0;
-	if(isDirty == 0){
-		return;
+	if(!isFirstFrame){
+		if(binsDirty.Load(id.xy) == 0){
+			return;
+		}
 	}
 
 	uint binLoad = 0;
 	uint binContents[BIN_MAX_AMOUNT_OF_CONTENT] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-	for(uint i = 0; i < particleCount; i++){ // TODO: can we skip particles that have already found their bin?
-		Particle particle = particles[i];
+	if(isFirstFrame){
+		for(uint i = 0; i < particleCount; i++){
+			Particle particle = particles[i];
 
-		if(particle.binPosX == id.x && particle.binPosY == id.y){
-			binContents[binLoad] = i;
-			binLoad = min(binLoad + 1, BIN_MAX_AMOUNT_OF_CONTENT);
+			if(particle.binPosX == id.x && particle.binPosY == id.y){
+				binContents[binLoad] = i;
+				binLoad = min(binLoad + 1, BIN_MAX_AMOUNT_OF_CONTENT);
+			}
+		}
+	}
+	else{
+		uint clusterLoad;
+		uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
+		GetNeighboringParticles(id.xy, clusterLoad, clusterContents);
+		for(uint i = 0; i < clusterLoad; i++){
+			uint particleIndex = clusterContents[i];
+			Particle particle = particles[particleIndex];
+
+			if(particle.binPosX == id.x && particle.binPosY == id.y){
+				binContents[binLoad] = particleIndex;
+				binLoad = min(binLoad + 1, BIN_MAX_AMOUNT_OF_CONTENT);
+			}
 		}
 	}
 
 	binLoads[id.xy] = binLoad / half(BIN_MAX_AMOUNT_OF_CONTENT);
 	
-	uint4 newContent = uint4(0, 0, 0, 0);
-	newContent.x = binContents[0];
-	newContent.y = binContents[1];
-	newContent.z = binContents[2];
-	newContent.w = binContents[3];
-	bins_00[id.xy] = newContent;
+	int4 newContent = int4(0, 0, 0, 0);
+	newContent.x = ConvertTwoU16ToOneI32(binContents[0], binContents[1]);
+	newContent.y = ConvertTwoU16ToOneI32(binContents[2], binContents[3]);
+	newContent.z = ConvertTwoU16ToOneI32(binContents[4], binContents[5]);
+	newContent.w = ConvertTwoU16ToOneI32(binContents[6], binContents[7]);
+	WriteBins_01(id.xy, newContent);
 	
-	newContent.x = binContents[4];
-	newContent.y = binContents[5];
-	newContent.z = binContents[6];
-	newContent.w = binContents[7];
-	bins_01[id.xy] = newContent;
+	newContent.x = ConvertTwoU16ToOneI32(binContents[8], binContents[9]);
+	newContent.y = ConvertTwoU16ToOneI32(binContents[10], binContents[11]);
+	newContent.z = ConvertTwoU16ToOneI32(binContents[12], binContents[13]);
+	newContent.w = ConvertTwoU16ToOneI32(binContents[14], binContents[15]);
+	WriteBins_23(id.xy, newContent);
+}
 
-	newContent.x = binContents[8];
-	newContent.y = binContents[9];
-	newContent.z = binContents[10];
-	newContent.w = binContents[11];
-	bins_02[id.xy] = newContent;
-
-	newContent.x = binContents[12];
-	newContent.y = binContents[13];
-	newContent.z = binContents[14];
-	newContent.w = binContents[15];
-	bins_03[id.xy] = newContent;
+[numthreads(BINS_THREAD_COUNT_X, BINS_THREAD_COUNT_Y, 1)]
+void SetBinsNotDirty(uint3 id : SV_DispatchThreadID){
+	binsDirty[id.xy] = 0.0;
 }
 
 [numthreads(THREAD_COUNT_X, 1, 1)]
@@ -462,6 +566,20 @@ void ComputeDensity(uint3 id : SV_DispatchThreadID) {
 	uint clusterLoad;
 	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
 	GetNeighboringParticles(uint2(particle.binPosX, particle.binPosY), clusterLoad, clusterContents);
+
+	// particle.debug1 = clusterContents[0];
+	// particle.debug2 = clusterContents[1];
+	// particle.debug3 = clusterContents[2];
+	// particle.debug4 = clusterContents[3];
+	// particle.debug5 = clusterContents[4];
+	// particle.debug6 = clusterContents[5];
+	// particle.debug7 = clusterContents[6];
+	// particle.debug8 = clusterContents[7];
+	// particle.debug9 = clusterContents[8];
+	// particle.debug10 = clusterContents[9];
+	// particle.debug11 = clusterContents[10];
+	// particle.debug12 = clusterContents[11];
+	// particle.debug13 = clusterContents[12];
 
 	particle.density = particle.GetMass() * POLY6 * pow(HSQ, 2.0);
 	for (uint i = 0; i < clusterLoad; i++){
@@ -498,7 +616,7 @@ void ComputeHeat(uint3 id : SV_DispatchThreadID) {
 	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
 	GetNeighboringParticles(uint2(particle.binPosX, particle.binPosY), clusterLoad, clusterContents);
 
-	particle.debug1 = 0.0;
+	particle.debugTemp = 0.0;
 	for (uint i = 0; i < clusterLoad; i++){
 		uint neighborIndex = clusterContents[i];
 
@@ -514,7 +632,7 @@ void ComputeHeat(uint3 id : SV_DispatchThreadID) {
 		
 		half isWithinRange = step(r2, HSQ_TEMPERATURE);
 		if(isWithinRange && neighborIndex == debugIndex && otherParticle.binPosX == particle.binPosX && otherParticle.binPosY == particle.binPosY){
-			particle.debug1 = 1.0;
+			particle.debugTemp = 1.0;
 		}
 
 		half isWarmerThanNeighbor = step(temperatureStartFrameOther, temperatureStartFrame);
