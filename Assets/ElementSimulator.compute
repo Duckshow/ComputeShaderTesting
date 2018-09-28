@@ -261,6 +261,7 @@ struct DebugVars{ // WARNING: variables must correspond to ElementSimulator.cs's
 	half debug_12;
 	half debug_13;
 	half debug_14;
+	half debug_15;
 
 	void SetID(half id1, half id2){
 		debugID.x = id1;
@@ -285,6 +286,7 @@ struct DebugVars{ // WARNING: variables must correspond to ElementSimulator.cs's
 		else if(index == 12) debug_12 = val;
 		else if(index == 13) debug_13 = val;
 		else if(index == 14) debug_14 = val;
+		else if(index == 15) debug_15 = val;
 	}
 };
 
@@ -304,11 +306,11 @@ uniform uint debugIndex;
 
 
 uint ConvertPosToBinPosX(float x) {
-	return floor(x / BIN_COUNT_X);
+	return floor(x / BIN_SIZE);
 }
 
 uint ConvertPosToBinPosY(float y) {
-	return floor(y / BIN_COUNT_Y);
+	return floor(y / BIN_SIZE);
 }
 
 uint ConvertBinIDToBinPosX(uint id){
@@ -326,7 +328,7 @@ uint GetBinIDFromBinPos(uint x, uint y){
 void AddContentsFromBinToCluster(uint binID, out uint clusterLoad, out uint clusterContents[BIN_CLUSTER_CONTENT_MAX]){
 	Bin bin = bins[binID];
 	for(uint i = 0; i < bin.load; i++){
-		clusterContents[clusterLoad] = bin.contents[i];
+		clusterContents[clusterLoad] = bin.contents[i] - 1;
 		clusterLoad++;
 	}
 }
@@ -385,25 +387,35 @@ void CacheParticlesInBins(uint3 id : SV_DispatchThreadID){
 		for(uint i = 0; i < particleCount; i++){
 			Particle particle = particles[i];
 			if(particle.binPosX == bin.posX && particle.binPosY == bin.posY){
-				binContents[binLoad] = i;
+				binContents[binLoad] = i + 1;
+				if(id.x == 0){
+					// debugVars[0].SetID(0, 0);
+					// debugVars[0].Set(0, particle.pos.x / BIN_SIZE);
+					// debugVars[0].Set(1, particle.pos.y / BIN_SIZE);
+					// debugVars[0].Set(2, particle.pos.x);
+					// debugVars[0].Set(3, particle.pos.y);
+					
+					// debugVars[0].Set(0, particle.binPosX);
+					// debugVars[0].Set(1, particle.binPosY);
+					// debugVars[0].Set(2, bin.posX);
+					// debugVars[0].Set(3, bin.posY);
+
+					debugVars[0].Set(i, i);
+					// debugVars[0].Set(1, binContents[0]);
+					// debugVars[0].Set(2, binContents[1]);
+					// debugVars[0].Set(3, binContents[2]);
+					// debugVars[0].Set(4, binContents[3]);
+					// debugVars[0].Set(5, binContents[4]);
+					// debugVars[0].Set(6, binContents[5]);
+					// debugVars[0].Set(7, binContents[6]);
+					// debugVars[0].Set(8, binContents[7]);
+				}
 				binLoad += 1;
 			}
 
 			if(binLoad >= BIN_MAX_AMOUNT_OF_CONTENT){
 				break;
 			}
-		}
-		if(id.x == 2){
-			debugVars[0].SetID(2, 0);
-			debugVars[0].Set(0, binLoad);
-			debugVars[0].Set(1, binContents[0]);
-			debugVars[0].Set(2, binContents[1]);
-			debugVars[0].Set(3, binContents[2]);
-			debugVars[0].Set(4, binContents[3]);
-			debugVars[0].Set(5, binContents[4]);
-			debugVars[0].Set(6, binContents[5]);
-			debugVars[0].Set(7, binContents[6]);
-			debugVars[0].Set(8, binContents[7]);
 		}
 	// }
 	// else{

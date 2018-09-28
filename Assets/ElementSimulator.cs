@@ -84,9 +84,10 @@ public class ElementSimulator : MonoBehaviour {
 		public float Debug_12;
 		public float Debug_13;
 		public float Debug_14;
+		public float Debug_15;
 
 		public static int GetStride() {
-			return sizeof(float) * 18; // must correspond to variables!
+			return sizeof(float) * 19; // must correspond to variables!
 		}
 
 		public void Print() {
