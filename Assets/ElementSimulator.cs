@@ -17,7 +17,7 @@ public class ElementSimulator : MonoBehaviour {
 		}
 	};
 
-	struct Particle{ // WARNING: variables must correspond to ElementSimulator.compute's Particle!
+	unsafe struct Particle{ // WARNING: variables must correspond to ElementSimulator.compute's Particle!
 		public Vector2 Pos;
 		public Vector2 Velocity;
 		public Vector2 Force;
@@ -57,68 +57,142 @@ public class ElementSimulator : MonoBehaviour {
 		// public float padding_8;
 		// 128 byte
 
-		public uint BinPosX;
-		public uint BinPosY;
 		public uint ElementIndex;
 
+		public uint BinPosX;
+		public uint BinPosY;
+		public uint ClusterLoad;
+		public fixed uint ClusterContents[BIN_CLUSTER_CONTENT_MAX]; // size of BIN_CLUSTER_CONTENT_MAX
+
 		public static int GetStride() {
-			return sizeof(float) * 34/*35*/ + sizeof(uint) * 3; // must correspond to variables!
+			return sizeof(float) * 34/*35*/ + sizeof(uint) * 4 + sizeof(uint) * BIN_CLUSTER_CONTENT_MAX; // must correspond to variables!
 		}
 	}
 
-	struct DebugVars{ // WARNING: variables must correspond to ElementSimulator.compute's Particle!
-		public float HasNewValue;
-		public Vector2 DebugID;
-		public float Debug_00;
-		public float Debug_01;
-		public float Debug_02;
-		public float Debug_03;
-		public float Debug_04;
-		public float Debug_05;
-		public float Debug_06;
-		public float Debug_07;
-		public float Debug_08;
-		public float Debug_09;
-		public float Debug_10;
-		public float Debug_11;
-		public float Debug_12;
-		public float Debug_13;
-		public float Debug_14;
-		public float Debug_15;
+	// struct DebugVars{ // WARNING: variables must correspond to ElementSimulator.compute's Particle!
+	// 	public float HasNewValue;
+	// 	public Vector2 DebugID;
+	// 	public float Debug_00;
+	// 	public float Debug_01;
+	// 	public float Debug_02;
+	// 	public float Debug_03;
+	// 	public float Debug_04;
+	// 	public float Debug_05;
+	// 	public float Debug_06;
+	// 	public float Debug_07;
+	// 	public float Debug_08;
+	// 	public float Debug_09;
+	// 	public float Debug_10;
+	// 	public float Debug_11;
+	// 	public float Debug_12;
+	// 	public float Debug_13;
+	// 	public float Debug_14;
+	// 	public float Debug_15;
+	// 	public float Debug_16;
+	// 	public float Debug_17;
+	// 	public float Debug_18;
+	// 	public float Debug_19;
+	// 	public float Debug_20;
+	// 	public float Debug_21;
+	// 	public float Debug_22;
+	// 	public float Debug_23;
+	// 	public float Debug_24;
+	// 	public float Debug_25;
+	// 	public float Debug_26;
+	// 	public float Debug_27;
+	// 	public float Debug_28;
+	// 	public float Debug_29;
+	// 	public float Debug_30;
+	// 	public float Debug_31;
+	// 	public float Debug_32;
+	// 	public float Debug_33;
+	// 	public float Debug_34;
+	// 	public float Debug_35;
+	// 	public float Debug_36;
+	// 	public float Debug_37;
+	// 	public float Debug_38;
+	// 	public float Debug_39;
+	// 	public float Debug_40;
+	// 	public float Debug_41;
+	// 	public float Debug_42;
+	// 	public float Debug_43;
+	// 	public float Debug_44;
+	// 	public float Debug_45;
+	// 	public float Debug_46;
+	// 	public float Debug_47;
+	// 	public float Debug_48;
+	// 	public float Debug_49;
 
-		public static int GetStride() {
-			return sizeof(float) * 19; // must correspond to variables!
-		}
+	// 	public static int GetStride() {
+	// 		return sizeof(float) * 53; // must correspond to variables!
+	// 	}
 
-		public void Print() {
-			if(HasNewValue == 0) return;
-			HasNewValue = 0;
+	// 	public void Print() {
+	// 		if(HasNewValue == 0) return;
+	// 		HasNewValue = 0;
 
-			Debug.Log("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-			Debug.Log("ID: " + DebugID);
-			Debug.Log("Debug_00: " + Debug_00);
-			Debug.Log("Debug_01: " + Debug_01);
-			Debug.Log("Debug_02: " + Debug_02);
-			Debug.Log("Debug_03: " + Debug_03);
-			Debug.Log("Debug_04: " + Debug_04);
-			Debug.Log("Debug_05: " + Debug_05);
-			Debug.Log("Debug_06: " + Debug_06);
-			Debug.Log("Debug_07: " + Debug_07);
-			Debug.Log("Debug_08: " + Debug_08);
-			Debug.Log("Debug_09: " + Debug_09);
-			Debug.Log("Debug_10: " + Debug_10);
-			Debug.Log("Debug_11: " + Debug_11);
-			Debug.Log("Debug_12: " + Debug_12);
-			Debug.Log("Debug_13: " + Debug_13);
-			Debug.Log("Debug_14: " + Debug_14);
-			Debug.Log("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-		}
-	}
+	// 		Debug.Log("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+	// 		Debug.Log("ID: " + DebugID);
+	// 		Debug.Log("Debug_00: " + Debug_00);
+	// 		Debug.Log("Debug_01: " + Debug_01);
+	// 		Debug.Log("Debug_02: " + Debug_02);
+	// 		Debug.Log("Debug_03: " + Debug_03);
+	// 		Debug.Log("Debug_04: " + Debug_04);
+	// 		Debug.Log("Debug_05: " + Debug_05);
+	// 		Debug.Log("Debug_06: " + Debug_06);
+	// 		Debug.Log("Debug_07: " + Debug_07);
+	// 		Debug.Log("Debug_08: " + Debug_08);
+	// 		Debug.Log("Debug_09: " + Debug_09);
+	// 		Debug.Log("Debug_10: " + Debug_10);
+	// 		Debug.Log("Debug_11: " + Debug_11);
+	// 		Debug.Log("Debug_12: " + Debug_12);
+	// 		Debug.Log("Debug_13: " + Debug_13);
+	// 		Debug.Log("Debug_14: " + Debug_14);
+	// 		Debug.Log("Debug_15: " + Debug_15);
+	// 		Debug.Log("Debug_16: " + Debug_16);
+	// 		Debug.Log("Debug_17: " + Debug_17);
+	// 		Debug.Log("Debug_18: " + Debug_18);
+	// 		Debug.Log("Debug_19: " + Debug_19);
+	// 		Debug.Log("Debug_20: " + Debug_20);
+	// 		Debug.Log("Debug_21: " + Debug_21);
+	// 		Debug.Log("Debug_22: " + Debug_22);
+	// 		Debug.Log("Debug_23: " + Debug_23);
+	// 		Debug.Log("Debug_24: " + Debug_24);
+	// 		Debug.Log("Debug_25: " + Debug_25);
+	// 		Debug.Log("Debug_26: " + Debug_26);
+	// 		Debug.Log("Debug_27: " + Debug_27);
+	// 		Debug.Log("Debug_28: " + Debug_28);
+	// 		Debug.Log("Debug_29: " + Debug_29);
+	// 		Debug.Log("Debug_30: " + Debug_30);
+	// 		Debug.Log("Debug_30: " + Debug_30);
+	// 		Debug.Log("Debug_31: " + Debug_31);
+	// 		Debug.Log("Debug_32: " + Debug_32);
+	// 		Debug.Log("Debug_33: " + Debug_33);
+	// 		Debug.Log("Debug_34: " + Debug_34);
+	// 		Debug.Log("Debug_35: " + Debug_35);
+	// 		Debug.Log("Debug_36: " + Debug_36);
+	// 		Debug.Log("Debug_37: " + Debug_37);
+	// 		Debug.Log("Debug_38: " + Debug_38);
+	// 		Debug.Log("Debug_39: " + Debug_39);
+	// 		Debug.Log("Debug_40: " + Debug_40);
+	// 		Debug.Log("Debug_40: " + Debug_40);
+	// 		Debug.Log("Debug_41: " + Debug_41);
+	// 		Debug.Log("Debug_42: " + Debug_42);
+	// 		Debug.Log("Debug_43: " + Debug_43);
+	// 		Debug.Log("Debug_44: " + Debug_44);
+	// 		Debug.Log("Debug_45: " + Debug_45);
+	// 		Debug.Log("Debug_46: " + Debug_46);
+	// 		Debug.Log("Debug_47: " + Debug_47);
+	// 		Debug.Log("Debug_48: " + Debug_48);
+	// 		Debug.Log("Debug_49: " + Debug_49);
+	// 		Debug.Log("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+	// 	}
+	// }
 
 	private const int THREAD_COUNT_MAX = 1024;
 
-	private const int START_PARTICLE_COUNT = 8192; // must be divisible by THREAD_COUNT_X!
-	private const int START_PARTICLE_COUNT_ACTIVE = 8192;
+	private const int START_PARTICLE_COUNT = 4096; // must be divisible by THREAD_COUNT_X!
+	private const int START_PARTICLE_COUNT_ACTIVE = 4096;
 	
 	//#region[rgba(80, 0, 0, 1)] | WARNING: shared with ElementSimulator.compute! must be equal!
 
@@ -146,6 +220,7 @@ public class ElementSimulator : MonoBehaviour {
 	private const string KERNEL_INITBINS = "InitBins";
 	private const string KERNEL_CLEAROUTPUTTEXTURE = "ClearOutputTexture";
 	private const string KERNEL_CACHEPARTICLESINBINS = "CacheParticlesInBins";
+	private const string KERNEL_CACHEPARTICLENEIGHBORS = "CacheParticleNeighbors";
 	private const string KERNEL_COMPUTEDENSITY = "ComputeDensity";
 	private const string KERNEL_COMPUTEPRESSURE = "ComputePressure";
 	private const string KERNEL_COMPUTEHEAT = "ComputeHeat";
@@ -156,6 +231,7 @@ public class ElementSimulator : MonoBehaviour {
 	private int kernelID_InitBins;
 	private int kernelID_ClearOutputTexture;
 	private int kernelID_CacheParticlesInBins;
+	private int kernelID_CacheParticleNeighbors;
 	private int kernelID_ComputeDensity;
 	private int kernelID_ComputePressure;
 	private int kernelID_ComputeHeat;
@@ -173,6 +249,7 @@ public class ElementSimulator : MonoBehaviour {
 	private const string PROPERTY_OUTPUT = "output";
 	private const string PROPERTY_ISFIRSTFRAME = "isFirstFrame";
 	private const string PROPERTY_ISEVENFRAME = "isEvenFrame";
+	private const string PROPERTY_DEBUGINDEX = "debugIndex";
 
 	private int shaderPropertyID_bins;
 	private int shaderPropertyID_particles;
@@ -183,6 +260,7 @@ public class ElementSimulator : MonoBehaviour {
 	private int shaderPropertyID_output;
 	private int shaderPropertyID_isFirstFrame;
 	private int shaderPropertyID_isEvenFrame;
+	private int shaderPropertyID_debugIndex;
 
 	private float updateInterval = 0.0f;
 	private float nextTimeToUpdate = 0.0f;
@@ -200,7 +278,7 @@ public class ElementSimulator : MonoBehaviour {
 	private Particle[] particles;
 
 	private ComputeBuffer bufferDebug;
-	private DebugVars[] debugVars;
+	// private DebugVars[] debugVars;
 
 	private RenderTexture output;
 	private Vector2[] uvs;
@@ -251,28 +329,28 @@ public class ElementSimulator : MonoBehaviour {
 	}
 
 	void OnValidate() { 
-		if (particles == null || particles.Length == 0) return;
+		// if (particles == null || particles.Length == 0) return;
 
-		ParticleSystem.Particle[] unityParticles = new ParticleSystem.Particle[particles.Length];
-		int particleCount = particleSys.GetParticles(unityParticles);
-		for (int i = 0; i < unityParticles.Length; i++){
-			Particle particle = particles[i];
-			ParticleSystem.Particle unityParticle = unityParticles[i];
+		// ParticleSystem.Particle[] unityParticles = new ParticleSystem.Particle[particles.Length];
+		// int particleCount = particleSys.GetParticles(unityParticles);
+		// for (int i = 0; i < unityParticles.Length; i++){
+		// 	Particle particle = particles[i];
+		// 	ParticleSystem.Particle unityParticle = unityParticles[i];
 
-			Color color = Color.Lerp(Color.blue, Color.red, particle.Temperature / 1000.0f);
-			if (particleIndex == i){
-				color = Color.cyan;
-			}
-			// else if (particle.DebugTemp > 0){
-			// 	color = Color.green;
-			// }
+		// 	Color color = Color.Lerp(Color.blue, Color.red, particle.Temperature / 1000.0f);
+		// 	if (particleIndex == i){
+		// 		color = Color.cyan;
+		// 	}
+		// 	// else if (particle.DebugTemp > 0){
+		// 	// 	color = Color.green;
+		// 	// }
 
-			color.a = particle.IsActive;
-			unityParticle.startColor = color;
+		// 	color.a = particle.IsActive;
+		// 	unityParticle.startColor = color;
 
-			unityParticles[i] = unityParticle;
-		}
-		particleSys.SetParticles(unityParticles, particleCount);
+		// 	unityParticles[i] = unityParticle;
+		// }
+		// particleSys.SetParticles(unityParticles, particleCount);
 	}
 
 	void Awake(){
@@ -280,6 +358,7 @@ public class ElementSimulator : MonoBehaviour {
 		kernelID_InitBins = shader.FindKernel(KERNEL_INITBINS);
 		kernelID_ClearOutputTexture = shader.FindKernel(KERNEL_CLEAROUTPUTTEXTURE);
 		kernelID_CacheParticlesInBins = shader.FindKernel(KERNEL_CACHEPARTICLESINBINS);
+		kernelID_CacheParticleNeighbors = shader.FindKernel(KERNEL_CACHEPARTICLENEIGHBORS);
 		kernelID_ComputeDensity = shader.FindKernel(KERNEL_COMPUTEDENSITY);
 		kernelID_ComputePressure = shader.FindKernel(KERNEL_COMPUTEPRESSURE);
 		kernelID_ComputeHeat = shader.FindKernel(KERNEL_COMPUTEHEAT);
@@ -292,16 +371,17 @@ public class ElementSimulator : MonoBehaviour {
 		shaderPropertyID_particleCount = Shader.PropertyToID(PROPERTY_PARTICLECOUNT);
 		// shaderPropertyID_debugBinIndexX = Shader.PropertyToID(PROPERTY_DEBUGBININDEX_X);
 		// shaderPropertyID_debugBinIndexY = Shader.PropertyToID(PROPERTY_DEBUGBININDEX_Y);
-		shaderPropertyID_debugVars = Shader.PropertyToID(PROPERTY_DEBUGVARS);
+		// shaderPropertyID_debugVars = Shader.PropertyToID(PROPERTY_DEBUGVARS);
 		shaderPropertyID_output = Shader.PropertyToID(PROPERTY_OUTPUT);
 		shaderPropertyID_isFirstFrame = Shader.PropertyToID(PROPERTY_ISFIRSTFRAME);
 		shaderPropertyID_isEvenFrame = Shader.PropertyToID(PROPERTY_ISEVENFRAME);
+		shaderPropertyID_debugIndex = Shader.PropertyToID(PROPERTY_DEBUGINDEX);
 	}
 
 	void OnDisable(){
 		bufferBins.Dispose();
 		bufferParticles.Dispose();
-		bufferDebug.Dispose();
+		// bufferDebug.Dispose();
 	}
 	
 	void Start () {
@@ -315,7 +395,7 @@ public class ElementSimulator : MonoBehaviour {
 
 		bins = new Bin[BIN_COUNT_X * BIN_COUNT_Y];
 		particles = new Particle[START_PARTICLE_COUNT];
-		debugVars = new DebugVars[1];
+		// debugVars = new DebugVars[1];
 
 		output = new RenderTexture(GRID_WIDTH_PIXELS, GRID_HEIGHT_PIXELS, 24);
 		output.enableRandomWrite = true;
@@ -326,49 +406,49 @@ public class ElementSimulator : MonoBehaviour {
 		float x = 0, y = 0;
 		for (int i = 0; i < particles.Length; i++){
 			if (i > 0){
-				// if (!reverse && i >= particles.Length * 0.5f){
-				// 	reverse = true;
-				// 	y = GRID_HEIGHT_PIXELS;
-				// 	x = GRID_WIDTH_PIXELS - 1;
-				// }
+				if (!reverse && i >= particles.Length * 0.5f){
+					reverse = true;
+					y = GRID_HEIGHT_PIXELS;
+					x = GRID_WIDTH_PIXELS - 1;
+				}
 
-				float spacing = 4.0f;
-				// if (reverse){
-				// 	y -= spacing;
-				// 	if (y < 0){
-				// 		y = GRID_HEIGHT_PIXELS - 1 - spacing * 0.5f;
-				// 		x -= spacing;
-				// 	}
-				// }
-				// else{
-				// 	y += spacing;
-				// 	if (y >= GRID_HEIGHT_PIXELS * 1.0f){
-				// 		y = spacing * 0.5f;
-				// 		x += spacing;
-				// 	}
-				// }
+				float spacing = 8.0f;
 				if (reverse){
-					x -= spacing;
-					if (x < 0){
-						x = GRID_WIDTH_PIXELS - 1 - spacing * 0.5f;
-						y -= spacing;
+					y -= spacing;
+					if (y < 0){
+						y = GRID_HEIGHT_PIXELS - 1 - spacing * 0.5f;
+						x -= spacing;
 					}
 				}
 				else{
-					x += spacing;
-					if (x >= GRID_WIDTH_PIXELS){
-						x = spacing * 0.5f;
-						y += spacing;
+					y += spacing;
+					if (y >= GRID_HEIGHT_PIXELS * 1.0f){
+						y = spacing * 0.5f;
+						x += spacing;
 					}
 				}
+				// if (reverse){
+				// 	x -= spacing;
+				// 	if (x < 0){
+				// 		x = GRID_WIDTH_PIXELS - 1 - spacing * 0.5f;
+				// 		y -= spacing;
+				// 	}
+				// }
+				// else{
+				// 	x += spacing;
+				// 	if (x >= GRID_WIDTH_PIXELS){
+				// 		x = spacing * 0.5f;
+				// 		y += spacing;
+				// 	}
+				// }
 			}
 
 			Particle particle = particles[i];
 
 			particle.Pos = new Vector2(x + Random.value * 1.0f, y);
-			//particle.Temperature = Random.Range(0, 1000);
-			//particle.Temperature = x < GRID_WIDTH_PIXELS * 0.5f ? 10000 : 0;
-			particle.Temperature = reverse ? 300 : 300;
+			// particle.Temperature = Random.Range(0, 1000);
+			// particle.Temperature = x < GRID_WIDTH_PIXELS * 0.5f ? 10000 : 0;
+			particle.Temperature = reverse ? 0 : 300;
 			particle.TemperatureStartFrame = particle.Temperature;
 			particle.ElementIndex = 0;
 			particle.IsActive = Mathf.Clamp01(Mathf.Sign(START_PARTICLE_COUNT_ACTIVE - (i + 1)));
@@ -385,7 +465,7 @@ public class ElementSimulator : MonoBehaviour {
 		// }
 		bufferBins = new ComputeBuffer(bins.Length, Bin.GetStride());
 		bufferParticles = new ComputeBuffer(particles.Length, Particle.GetStride());
-		bufferDebug = new ComputeBuffer(1, DebugVars.GetStride());
+		// bufferDebug = new ComputeBuffer(1, DebugVars.GetStride());
 	}
 
 	void Update() {
@@ -402,7 +482,7 @@ public class ElementSimulator : MonoBehaviour {
 
 		shader.SetBool(shaderPropertyID_isFirstFrame, isFirstFrame);
 		shader.SetBool(shaderPropertyID_isEvenFrame, frame % 2 == 0);
-		shader.SetFloat("debugIndex", particleIndex);
+		shader.SetFloat(shaderPropertyID_debugIndex, particleIndex);
 
 		if (isFirstFrame){
 			// Init
@@ -410,13 +490,13 @@ public class ElementSimulator : MonoBehaviour {
 			shader.SetBuffer(kernelID_Init, shaderPropertyID_particles, bufferParticles);
 			shader.SetInt(shaderPropertyID_particleCount, START_PARTICLE_COUNT_ACTIVE);
 			shader.Dispatch(kernelID_Init, Mathf.CeilToInt(particles.Length / THREAD_COUNT_X), 1, 1);
-			bufferParticles.GetData(particles);
+			// bufferParticles.GetData(particles);
 
 			// InitBins
 			bufferBins.SetData(bins);
 			shader.SetBuffer(kernelID_InitBins, shaderPropertyID_bins, bufferBins);
 			shader.Dispatch(kernelID_InitBins, Mathf.CeilToInt(bins.Length / BINS_THREAD_COUNT), 1, 1);
-			bufferBins.GetData(bins);
+			// bufferBins.GetData(bins);
 		}
 
 		// ClearOutputTexture
@@ -430,16 +510,23 @@ public class ElementSimulator : MonoBehaviour {
 
 			// CacheParticlesInBins
 			if (isFirstFrame){
-				bufferBins.SetData(bins);
-				bufferParticles.SetData(particles);
+				// bufferBins.SetData(bins);
+				// bufferParticles.SetData(particles);
 				shader.SetBuffer(kernelID_CacheParticlesInBins, shaderPropertyID_bins, bufferBins);
 				shader.SetBuffer(kernelID_CacheParticlesInBins, shaderPropertyID_particles, bufferParticles);
 			}
-			bufferDebug.SetData(debugVars);
-			shader.SetBuffer(kernelID_CacheParticlesInBins, shaderPropertyID_debugVars, bufferDebug);
 			shader.Dispatch(kernelID_CacheParticlesInBins, binsThreadGroupCount, 1, 1);
-			bufferDebug.GetData(debugVars);
 		}
+
+		// CacheParticleNeighbors
+		if (isFirstFrame){
+			shader.SetBuffer(kernelID_CacheParticleNeighbors, shaderPropertyID_bins, bufferBins);
+			shader.SetBuffer(kernelID_CacheParticleNeighbors, shaderPropertyID_particles, bufferParticles);
+		}
+		// bufferDebug.SetData(debugVars);
+		// shader.SetBuffer(kernelID_CacheParticleNeighbors, shaderPropertyID_debugVars, bufferDebug);
+		shader.Dispatch(kernelID_CacheParticleNeighbors, particlesThreadGroupCountX, 1, 1);
+		// bufferDebug.GetData(debugVars);
 
 		// ComputeDensity
 		if (isFirstFrame){
@@ -448,7 +535,7 @@ public class ElementSimulator : MonoBehaviour {
 		}
 		shader.Dispatch	(kernelID_ComputeDensity, particlesThreadGroupCountX, 1, 1);
 
-		// ComputePressure
+		// // ComputePressure
 		if (isFirstFrame){
 			shader.SetBuffer(kernelID_ComputePressure, shaderPropertyID_bins, bufferBins);
 			shader.SetBuffer(kernelID_ComputePressure, shaderPropertyID_particles, bufferParticles);
@@ -523,7 +610,7 @@ public class ElementSimulator : MonoBehaviour {
 		// }
 		// particleSys.SetParticles(unityParticles, particleCount);
 
-		debugVars[0].Print();
+		// debugVars[0].Print();
 		// PrintParticle();
 
 		frame++;

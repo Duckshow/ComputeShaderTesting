@@ -2,6 +2,7 @@
 #pragma kernel InitBins
 #pragma kernel ClearOutputTexture
 #pragma kernel CacheParticlesInBins
+#pragma kernel CacheParticleNeighbors
 #pragma kernel ComputeDensity
 #pragma kernel ComputePressure
 #pragma kernel ComputeHeat
@@ -21,7 +22,7 @@ static const float HSQ_TEMPERATURE = HSQ * 12.0; // interaction radius
 static const float H_SURFACE_TENSION = H * 12.0; // interaction radius
 static const float MASS = 128.0; // assume all particles have the same mass
 static const float VISC = 6.0; // viscosity constant
-static const float DT = 0.0005;// 0.0008; // integration timestep
+static const float DT = 0.0004;// 0.0008; // integration timestep
 static const float DENSITY_OFFSET = 0.9;// 1.0;//0.825; // make SPIKY_GRAD apply force earlier (particles don't have to be as close)
 static const float VISC_OFFSET = 1.0;//1.0;//0.825; // make VISC_LAP apply force earlier (particles don't have to be as close)
 static const float PI = 3.14159265359;
@@ -38,7 +39,7 @@ static const float MAX_TEMPERATURE = 1000.0;
 
 static const float THERMAL_DIFFUSIVITY = 0.1;
 static const float REPEL_STRENGTH_MIN = 1.0;//10.0;
-static const float REPEL_STRENGTH_MAX = 1.0;//40.0;
+static const float REPEL_STRENGTH_MAX = 20.0;//40.0;
 static const float REPEL_FACTOR_MIN = 1.0 / REPEL_STRENGTH_MAX;
 static const float REPEL_FACTOR_MAX = 1.0 / REPEL_STRENGTH_MIN;
 static const float CLUSTERING_RESISTANCE = 1.0;//20.0;
@@ -180,9 +181,13 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 	// half padding_8;
 	// 128 byte
 
+	uint elementIndex;  // *
+
 	uint binPosX;
 	uint binPosY;
-	uint elementIndex;  // *
+	uint clusterLoad;
+	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
+
 
 	float GetMass()						{ return Mass[elementIndex]; }
 	float GetViscosity()				{ return Viscosity[elementIndex]; }
@@ -243,52 +248,122 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 	}
 };
 
-struct DebugVars{ // WARNING: variables must correspond to ElementSimulator.cs's DebugVars!
-	half hasNewValue;
-	half2 debugID;
-	half debug_00;
-	half debug_01;
-	half debug_02;
-	half debug_03;
-	half debug_04;
-	half debug_05;
-	half debug_06;
-	half debug_07;
-	half debug_08;
-	half debug_09;
-	half debug_10;
-	half debug_11;
-	half debug_12;
-	half debug_13;
-	half debug_14;
-	half debug_15;
+// struct DebugVars{ // WARNING: variables must correspond to ElementSimulator.cs's DebugVars!
+// 	half hasNewValue;
+// 	half2 debugID;
+// 	half debug_00;
+// 	half debug_01;
+// 	half debug_02;
+// 	half debug_03;
+// 	half debug_04;
+// 	half debug_05;
+// 	half debug_06;
+// 	half debug_07;
+// 	half debug_08;
+// 	half debug_09;
+// 	half debug_10;
+// 	half debug_11;
+// 	half debug_12;
+// 	half debug_13;
+// 	half debug_14;
+// 	half debug_15;
+// 	half debug_16;
+// 	half debug_17;
+// 	half debug_18;
+// 	half debug_19;
+// 	half debug_20;
+// 	half debug_21;
+// 	half debug_22;
+// 	half debug_23;
+// 	half debug_24;
+// 	half debug_25;
+// 	half debug_26;
+// 	half debug_27;
+// 	half debug_28;
+// 	half debug_29;
+// 	half debug_30;
+// 	half debug_31;
+// 	half debug_32;
+// 	half debug_33;
+// 	half debug_34;
+// 	half debug_35;
+// 	half debug_36;
+// 	half debug_37;
+// 	half debug_38;
+// 	half debug_39;
+// 	half debug_40;
+// 	half debug_41;
+// 	half debug_42;
+// 	half debug_43;
+// 	half debug_44;
+// 	half debug_45;
+// 	half debug_46;
+// 	half debug_47;
+// 	half debug_48;
+// 	half debug_49;
 
-	void SetID(half id1, half id2){
-		debugID.x = id1;
-		debugID.y = id2;
-	}
+// 	void SetID(half id1, half id2){
+// 		debugID.x = id1;
+// 		debugID.y = id2;
+// 	}
 
-	void Set(uint index, float val){
-		hasNewValue = 1;
+// 	void Set(uint index, float val){
+// 		hasNewValue = 1;
 
-		if(index == 0) debug_00 = val;
-		else if(index == 1) debug_01 = val;
-		else if(index == 2) debug_02 = val;
-		else if(index == 3) debug_03 = val;
-		else if(index == 4) debug_04 = val;
-		else if(index == 5) debug_05 = val;
-		else if(index == 6) debug_06 = val;
-		else if(index == 7) debug_07 = val;
-		else if(index == 8) debug_08 = val;
-		else if(index == 9) debug_09 = val;
-		else if(index == 10) debug_10 = val;
-		else if(index == 11) debug_11 = val;
-		else if(index == 12) debug_12 = val;
-		else if(index == 13) debug_13 = val;
-		else if(index == 14) debug_14 = val;
-		else if(index == 15) debug_15 = val;
-	}
-};
+// 		if(index == 0) debug_00 = val;
+// 		else if(index == 1) debug_01 = val;
+// 		else if(index == 2) debug_02 = val;
+// 		else if(index == 3) debug_03 = val;
+// 		else if(index == 4) debug_04 = val;
+// 		else if(index == 5) debug_05 = val;
+// 		else if(index == 6) debug_06 = val;
+// 		else if(index == 7) debug_07 = val;
+// 		else if(index == 8) debug_08 = val;
+// 		else if(index == 9) debug_09 = val;
+// 		else if(index == 10) debug_10 = val;
+// 		else if(index == 11) debug_11 = val;
+// 		else if(index == 12) debug_12 = val;
+// 		else if(index == 13) debug_13 = val;
+// 		else if(index == 14) debug_14 = val;
+// 		else if(index == 15) debug_15 = val;
+// 		else if(index == 16) debug_16 = val;
+// 		else if(index == 17) debug_17 = val;
+// 		else if(index == 18) debug_18 = val;
+// 		else if(index == 19) debug_19 = val;
+// 		else if(index == 20) debug_20 = val;
+// 		else if(index == 21) debug_21 = val;
+// 		else if(index == 22) debug_22 = val;
+// 		else if(index == 23) debug_23 = val;
+// 		else if(index == 24) debug_24 = val;
+// 		else if(index == 25) debug_25 = val;
+// 		else if(index == 26) debug_26 = val;
+// 		else if(index == 27) debug_27 = val;
+// 		else if(index == 28) debug_28 = val;
+// 		else if(index == 29) debug_29 = val;
+// 		else if(index == 30) debug_30 = val;
+// 		else if(index == 31) debug_31 = val;
+// 		else if(index == 31) debug_31 = val;
+// 		else if(index == 32) debug_32 = val;
+// 		else if(index == 33) debug_33 = val;
+// 		else if(index == 34) debug_34 = val;
+// 		else if(index == 35) debug_35 = val;
+// 		else if(index == 36) debug_36 = val;
+// 		else if(index == 37) debug_37 = val;
+// 		else if(index == 38) debug_38 = val;
+// 		else if(index == 39) debug_39 = val;
+// 		else if(index == 40) debug_40 = val;
+// 		else if(index == 41) debug_41 = val;
+// 		else if(index == 41) debug_41 = val;
+// 		else if(index == 42) debug_42 = val;
+// 		else if(index == 43) debug_43 = val;
+// 		else if(index == 44) debug_44 = val;
+// 		else if(index == 45) debug_45 = val;
+// 		else if(index == 46) debug_46 = val;
+// 		else if(index == 47) debug_47 = val;
+// 		else if(index == 48) debug_48 = val;
+// 		else if(index == 49) debug_49 = val;
+// 	}
+// };
 
 
 RWStructuredBuffer<Bin> bins;
@@ -296,7 +371,7 @@ RWStructuredBuffer<Particle> particles;
 uniform uint particleCount;
 // uniform int debugBinIndexX;
 // uniform int debugBinIndexY;
-RWStructuredBuffer<DebugVars> debugVars;
+// RWStructuredBuffer<DebugVars> debugVars;
 
 RWTexture2D<float4> output;
 uniform bool isFirstFrame;
@@ -325,25 +400,119 @@ uint GetBinIDFromBinPos(uint x, uint y){
 	return y * BIN_COUNT_X + x;
 }
 
-void AddContentsFromBinToCluster(uint binID, out uint clusterLoad, out uint clusterContents[BIN_CLUSTER_CONTENT_MAX]){
-	Bin bin = bins[binID];
-	for(uint i = 0; i < bin.load; i++){
-		clusterContents[clusterLoad] = bin.contents[i] - 1;
-		clusterLoad++;
-	}
-}
-
 void GetNeighboringParticles(uint binPosX, uint binPosY, out uint clusterLoad, out uint clusterContents[BIN_CLUSTER_CONTENT_MAX]){
+	uint binIDs[BIN_CLUSTER_SIZE] = {
+		GetBinIDFromBinPos(binPosX, binPosY),
+		GetBinIDFromBinPos(binPosX - 1, binPosY),
+		GetBinIDFromBinPos(binPosX + 1, binPosY),
+		GetBinIDFromBinPos(binPosX, binPosY - 1),
+		GetBinIDFromBinPos(binPosX, binPosY + 1),
+		GetBinIDFromBinPos(binPosX - 1, binPosY - 1),
+		GetBinIDFromBinPos(binPosX - 1, binPosY + 1),
+		GetBinIDFromBinPos(binPosX + 1, binPosY + 1),
+		GetBinIDFromBinPos(binPosX + 1, binPosY - 1),
+	};
+
+	// Bin bin;
+	// uint binLoad;
+	// uint binContents[BIN_MAX_AMOUNT_OF_CONTENT];
+
+	// bin = bins[binIDs[0]];
+	// binLoad = bin.load;
+	// binContents = bin.contents;
+
+	// clusterLoad = 0;
+	// uint totalIndex = 0, contentIndex = 0, binIndex = 0;
+	// for(; totalIndex < BIN_CLUSTER_CONTENT_MAX; totalIndex++, contentIndex++){
+	// 	if(binIndex >= BIN_CLUSTER_SIZE) break;
+
+	// 	while(contentIndex >= binLoad && binIndex < BIN_CLUSTER_SIZE){
+	// 		contentIndex = 0;
+	// 		binIndex++;
+
+	// 		bin = bins[binIDs[binIndex]];
+	// 		binLoad = bin.load;
+	// 		binContents = bin.contents;
+	// 	}
+
+	// 	if(contentIndex < binLoad){
+	// 		clusterContents[totalIndex] = binContents[contentIndex];
+	// 		clusterLoad += 1;
+	// 	}
+	// }
+
+	Bin bin;
+	uint binLoad;
+	uint binContents[BIN_MAX_AMOUNT_OF_CONTENT];
+	uint totalIndex = 0;
+
 	clusterLoad = 0;
-	AddContentsFromBinToCluster(GetBinIDFromBinPos(binPosX, binPosY), clusterLoad, clusterContents);
-	AddContentsFromBinToCluster(GetBinIDFromBinPos(binPosX - 1, binPosY), clusterLoad, clusterContents);
-	AddContentsFromBinToCluster(GetBinIDFromBinPos(binPosX + 1, binPosY), clusterLoad, clusterContents);
-	AddContentsFromBinToCluster(GetBinIDFromBinPos(binPosX, binPosY - 1), clusterLoad, clusterContents);
-	AddContentsFromBinToCluster(GetBinIDFromBinPos(binPosX, binPosY + 1), clusterLoad, clusterContents);
-	AddContentsFromBinToCluster(GetBinIDFromBinPos(binPosX - 1, binPosY - 1), clusterLoad, clusterContents);
-	AddContentsFromBinToCluster(GetBinIDFromBinPos(binPosX - 1, binPosY + 1), clusterLoad, clusterContents);
-	AddContentsFromBinToCluster(GetBinIDFromBinPos(binPosX + 1, binPosY + 1), clusterLoad, clusterContents);
-	AddContentsFromBinToCluster(GetBinIDFromBinPos(binPosX + 1, binPosY - 1), clusterLoad, clusterContents);
+	for(uint binIndex = 0; binIndex < BIN_CLUSTER_SIZE; binIndex++){
+		bin = bins[binIDs[binIndex]];
+		binLoad = bin.load;
+		binContents = bin.contents;
+
+		for(uint contentIndex = 0; contentIndex < binLoad; contentIndex++){
+			clusterContents[totalIndex] = binContents[contentIndex];
+			clusterLoad += 1;
+			totalIndex += 1;
+		}
+	}
+
+	// if(binPosX == 0 && binPosY == 0){
+	// 	debugVars[0].SetID(clusterLoad, 0);
+	// 	debugVars[0].Set(0, clusterContents[0]);
+	// 	debugVars[0].Set(1, clusterContents[1]);
+	// 	debugVars[0].Set(2, clusterContents[2]);
+	// 	debugVars[0].Set(3, clusterContents[3]);
+	// 	debugVars[0].Set(4, clusterContents[4]);
+	// 	debugVars[0].Set(5, clusterContents[5]);
+	// 	debugVars[0].Set(6, clusterContents[6]);
+	// 	debugVars[0].Set(7, clusterContents[7]);
+	// 	debugVars[0].Set(8, clusterContents[8]);
+	// 	debugVars[0].Set(9, clusterContents[9]);
+	// 	debugVars[0].Set(10, clusterContents[10]);
+	// 	debugVars[0].Set(11, clusterContents[11]);
+	// 	debugVars[0].Set(12, clusterContents[12]);
+	// 	debugVars[0].Set(13, clusterContents[13]);
+	// 	debugVars[0].Set(14, clusterContents[14]);
+	// 	debugVars[0].Set(15, clusterContents[15]);
+	// 	debugVars[0].Set(16, clusterContents[16]);
+	// 	debugVars[0].Set(17, clusterContents[17]);
+	// 	debugVars[0].Set(18, clusterContents[18]);
+	// 	debugVars[0].Set(19, clusterContents[19]);
+	// 	debugVars[0].Set(20, clusterContents[20]);
+	// 	debugVars[0].Set(21, clusterContents[21]);
+	// 	debugVars[0].Set(22, clusterContents[22]);
+	// 	debugVars[0].Set(23, clusterContents[23]);
+	// 	debugVars[0].Set(24, clusterContents[24]);
+	// 	debugVars[0].Set(25, clusterContents[25]);
+	// 	debugVars[0].Set(26, clusterContents[26]);
+	// 	debugVars[0].Set(27, clusterContents[27]);
+	// 	debugVars[0].Set(28, clusterContents[28]);
+	// 	debugVars[0].Set(29, clusterContents[29]);
+	// 	debugVars[0].Set(30, clusterContents[30]);
+	// 	debugVars[0].Set(31, clusterContents[31]);
+	// 	debugVars[0].Set(32, clusterContents[32]);
+	// 	debugVars[0].Set(33, clusterContents[33]);
+	// 	debugVars[0].Set(34, clusterContents[34]);
+	// 	debugVars[0].Set(35, clusterContents[35]);
+	// 	debugVars[0].Set(36, clusterContents[36]);
+	// 	debugVars[0].Set(37, clusterContents[37]);
+	// 	debugVars[0].Set(38, clusterContents[38]);
+	// 	debugVars[0].Set(39, clusterContents[39]);
+	// 	debugVars[0].Set(40, clusterContents[40]);
+	// 	debugVars[0].Set(41, clusterContents[41]);
+	// 	debugVars[0].Set(42, clusterContents[42]);
+	// 	debugVars[0].Set(43, clusterContents[43]);
+	// 	debugVars[0].Set(44, clusterContents[44]);
+	// 	debugVars[0].Set(45, clusterContents[45]);
+	// 	debugVars[0].Set(46, clusterContents[46]);
+	// 	debugVars[0].Set(47, clusterContents[47]);
+	// 	debugVars[0].Set(48, clusterContents[48]);
+	// 	debugVars[0].Set(49, clusterContents[49]);
+
+	// }
 }
 
 // called once
@@ -383,33 +552,11 @@ void CacheParticlesInBins(uint3 id : SV_DispatchThreadID){
 
 	uint binLoad = 0;
 	uint binContents[BIN_MAX_AMOUNT_OF_CONTENT] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-	// if(isFirstFrame){
+	if(isFirstFrame){
 		for(uint i = 0; i < particleCount; i++){
 			Particle particle = particles[i];
 			if(particle.binPosX == bin.posX && particle.binPosY == bin.posY){
-				binContents[binLoad] = i + 1;
-				if(id.x == 0){
-					// debugVars[0].SetID(0, 0);
-					// debugVars[0].Set(0, particle.pos.x / BIN_SIZE);
-					// debugVars[0].Set(1, particle.pos.y / BIN_SIZE);
-					// debugVars[0].Set(2, particle.pos.x);
-					// debugVars[0].Set(3, particle.pos.y);
-					
-					// debugVars[0].Set(0, particle.binPosX);
-					// debugVars[0].Set(1, particle.binPosY);
-					// debugVars[0].Set(2, bin.posX);
-					// debugVars[0].Set(3, bin.posY);
-
-					debugVars[0].Set(i, i);
-					// debugVars[0].Set(1, binContents[0]);
-					// debugVars[0].Set(2, binContents[1]);
-					// debugVars[0].Set(3, binContents[2]);
-					// debugVars[0].Set(4, binContents[3]);
-					// debugVars[0].Set(5, binContents[4]);
-					// debugVars[0].Set(6, binContents[5]);
-					// debugVars[0].Set(7, binContents[6]);
-					// debugVars[0].Set(8, binContents[7]);
-				}
+				binContents[binLoad] = i;
 				binLoad += 1;
 			}
 
@@ -417,31 +564,68 @@ void CacheParticlesInBins(uint3 id : SV_DispatchThreadID){
 				break;
 			}
 		}
-	// }
-	// else{
-	// 	uint clusterLoad;
-	// 	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
-	// 	GetNeighboringParticles(bin.posX, bin.posY, clusterLoad, clusterContents);
 
-	// 	for(uint i = 0; i < clusterLoad; i++){
-	// 		int particleIndex = clusterContents[i];	
-	// 		Particle particle = particles[particleIndex];
+		// if(id.x == 0){
+		// 	debugVars[0].SetID(binLoad, 0);
+		// 	debugVars[0].Set(0, binContents[0]);
+		// 	debugVars[0].Set(1, binContents[1]);
+		// 	debugVars[0].Set(2, binContents[2]);
+		// 	debugVars[0].Set(3, binContents[3]);
+		// 	debugVars[0].Set(4, binContents[4]);
+		// 	debugVars[0].Set(5, binContents[5]);
+		// 	debugVars[0].Set(6, binContents[6]);
+		// 	debugVars[0].Set(7, binContents[7]);
+		// 	debugVars[0].Set(8, binContents[8]);
+		// 	debugVars[0].Set(9, binContents[9]);
+		// 	debugVars[0].Set(10, binContents[10]);
+		// 	debugVars[0].Set(11, binContents[11]);
+		// 	debugVars[0].Set(12, binContents[12]);
+		// 	debugVars[0].Set(13, binContents[13]);
+		// 	debugVars[0].Set(14, binContents[14]);
+		// 	debugVars[0].Set(15, binContents[15]);
+		// }
+	}
+	else{
+		uint clusterLoad;
+		uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
+		GetNeighboringParticles(bin.posX, bin.posY, clusterLoad, clusterContents);
 
-	// 		if(particle.binPosX == bin.posX && particle.binPosY == bin.posY){
-	// 			binContents[binLoad] = particleIndex;
-	// 			binLoad += 1;
+		for(uint i = 0; i < clusterLoad; i++){
+			int particleIndex = clusterContents[i];	
+			Particle particle = particles[particleIndex];
 
-	// 			if(binLoad >= BIN_MAX_AMOUNT_OF_CONTENT){
-	// 				break;
-	// 			}
-	// 		}
-	// 	}
-	// }
+			if(particle.binPosX == bin.posX && particle.binPosY == bin.posY){
+				binContents[binLoad] = particleIndex;
+				binLoad += 1;
+
+				if(binLoad >= BIN_MAX_AMOUNT_OF_CONTENT){
+					break;
+				}
+			}
+		}
+	}
 
 	bin.isDirty = 0;
 	bin.load = binLoad;
 	bin.contents = binContents;
 	bins[id.x] = bin;
+}
+
+[numthreads(THREAD_COUNT_X, 1, 1)]
+void CacheParticleNeighbors(uint3 id : SV_DispatchThreadID){
+	Particle particle = particles[id.x];
+	if(particle.isActive == 0){
+		return;
+	}
+
+	uint clusterLoad;
+	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
+	GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
+
+	particle.clusterLoad = clusterLoad;
+	particle.clusterContents = clusterContents;
+
+	particles[id.x] = particle;
 }
 
 [numthreads(THREAD_COUNT_X, 1, 1)]
@@ -451,9 +635,14 @@ void ComputeDensity(uint3 id : SV_DispatchThreadID) {
 		return;
 	}
 
-	uint clusterLoad;
-	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
-	GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
+
+	uint clusterLoad = particle.clusterLoad;
+	uint clusterContents[BIN_CLUSTER_CONTENT_MAX] = particle.clusterContents;
+	// GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
+
+	// uint clusterLoad;
+	// uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
+	// GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
 
 	particle.density = particle.GetMass() * POLY6 * pow(HSQ, 2.0);
 	for (uint i = 0; i < clusterLoad; i++){
@@ -486,9 +675,13 @@ void ComputeHeat(uint3 id : SV_DispatchThreadID) {
 		return;
 	}
 
-	uint clusterLoad;
-	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
-	GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
+	uint clusterLoad = particle.clusterLoad;
+	uint clusterContents[BIN_CLUSTER_CONTENT_MAX] = particle.clusterContents;
+	// GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
+
+	// uint clusterLoad;
+	// uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
+	// GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
 
 	particle.debugTemp = 0.0;
 	for (uint i = 0; i < clusterLoad; i++){
@@ -575,9 +768,13 @@ void ApplyHeat(uint3 id : SV_DispatchThreadID) {
 		return;
 	}
 
-	uint clusterLoad;
-	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
-	GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
+	uint clusterLoad = particle.clusterLoad;
+	uint clusterContents[BIN_CLUSTER_CONTENT_MAX] = particle.clusterContents;
+	// GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
+
+	// uint clusterLoad;
+	// uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
+	// GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
 
 	half heat = particle.temperatureStartFrame;
 	
@@ -612,15 +809,19 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 		return;
 	}
 
+	uint clusterLoad = particle.clusterLoad;
+	uint clusterContents[BIN_CLUSTER_CONTENT_MAX] = particle.clusterContents;
+	// GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
+
+	// uint clusterLoad;
+	// uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
+	// GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
+
 	float2 fpress = float2(0.0, 0.0);
 	float2 fvisc = float2(0.0, 0.0);
 	float2 fsurftens = float2(0.0, 0.0);
 	float2 fgrav = G * particle.density;
 	
-	uint clusterLoad;
-	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
-	GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
-
 	for (uint i = 0; i < clusterLoad; i++){
 		uint neighborIndex = clusterContents[i];
 	
@@ -682,7 +883,7 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 	particle.velocity.y *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.y - oldY)), 0, 1));
 	// velocity = particle.velocity;
 
-	float temp = (particle.temperature / MAX_TEMPERATURE) * 3.0;
+	float temp = (particle.temperature / MAX_TEMPERATURE);
 	output[particle.pos] = id.x == debugIndex ? float4(0.0, 0.5, 1.0, particle.isActive) : float4(temp, 0, 1 - temp, particle.isActive);
 	// output[particle.pos] = float4(0, 0, 0, 1);
 
