@@ -1,5 +1,6 @@
 ﻿#pragma kernel Init
 #pragma kernel InitBins
+#pragma kernel CacheBinStates
 #pragma kernel ClearOutputTexture
 #pragma kernel CacheParticlesInBins
 #pragma kernel CacheParticleNeighbors
@@ -22,7 +23,7 @@ static const float HSQ_TEMPERATURE = HSQ * 12.0; // interaction radius
 static const float H_SURFACE_TENSION = H * 12.0; // interaction radius
 static const float MASS = 128.0; // assume all particles have the same mass
 static const float VISC = 6.0; // viscosity constant
-static const float DT = 0.0004;// 0.0008; // integration timestep
+static const float DT = 0.001;// 0.0008; // integration timestep
 static const float DENSITY_OFFSET = 0.9;// 1.0;//0.825; // make SPIKY_GRAD apply force earlier (particles don't have to be as close)
 static const float VISC_OFFSET = 1.0;//1.0;//0.825; // make VISC_LAP apply force earlier (particles don't have to be as close)
 static const float PI = 3.14159265359;
@@ -39,7 +40,7 @@ static const float MAX_TEMPERATURE = 1000.0;
 
 static const float THERMAL_DIFFUSIVITY = 0.1;
 static const float REPEL_STRENGTH_MIN = 1.0;//10.0;
-static const float REPEL_STRENGTH_MAX = 20.0;//40.0;
+static const float REPEL_STRENGTH_MAX = 20.0;//20.0;//40.0;
 static const float REPEL_FACTOR_MIN = 1.0 / REPEL_STRENGTH_MAX;
 static const float REPEL_FACTOR_MAX = 1.0 / REPEL_STRENGTH_MIN;
 static const float CLUSTERING_RESISTANCE = 1.0;//20.0;
@@ -367,6 +368,7 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 
 
 RWStructuredBuffer<Bin> bins;
+RWStructuredBuffer<Bin> binsAtStartFrame;
 RWStructuredBuffer<Particle> particles;
 uniform uint particleCount;
 // uniform int debugBinIndexX;
@@ -400,7 +402,7 @@ uint GetBinIDFromBinPos(uint x, uint y){
 	return y * BIN_COUNT_X + x;
 }
 
-void GetNeighboringParticles(uint binPosX, uint binPosY, out uint clusterLoad, out uint clusterContents[BIN_CLUSTER_CONTENT_MAX]){
+void GetNeighboringParticles(uint binPosX, uint binPosY, bool willWriteToBins, out uint clusterLoad, out uint clusterContents[BIN_CLUSTER_CONTENT_MAX]){
 	uint binIDs[BIN_CLUSTER_SIZE] = {
 		GetBinIDFromBinPos(binPosX, binPosY),
 		GetBinIDFromBinPos(binPosX - 1, binPosY),
@@ -411,6 +413,22 @@ void GetNeighboringParticles(uint binPosX, uint binPosY, out uint clusterLoad, o
 		GetBinIDFromBinPos(binPosX - 1, binPosY + 1),
 		GetBinIDFromBinPos(binPosX + 1, binPosY + 1),
 		GetBinIDFromBinPos(binPosX + 1, binPosY - 1),
+	};
+
+	uint safetyModLeft = signAbs(binPosX);
+	uint safetyModRight = signAbs(BIN_COUNT_X - 1 - binPosX);
+	uint safetyModDown = signAbs(binPosY);
+	uint safetyModUp = signAbs(BIN_COUNT_Y - 1 - binPosY);
+	uint binIDsSafetyMods[BIN_CLUSTER_SIZE] = {
+		1,
+		safetyModLeft,
+		safetyModRight,
+		safetyModDown,
+		safetyModUp,
+		safetyModLeft * safetyModDown,
+		safetyModLeft * safetyModUp,
+		safetyModRight * safetyModUp,
+		safetyModRight * safetyModDown
 	};
 
 	// Bin bin;
@@ -445,11 +463,19 @@ void GetNeighboringParticles(uint binPosX, uint binPosY, out uint clusterLoad, o
 	uint binLoad;
 	uint binContents[BIN_MAX_AMOUNT_OF_CONTENT];
 	uint totalIndex = 0;
+	uint binID;
 
 	clusterLoad = 0;
 	for(uint binIndex = 0; binIndex < BIN_CLUSTER_SIZE; binIndex++){
-		bin = bins[binIDs[binIndex]];
-		binLoad = bin.load;
+		binID = binIDs[binIndex];
+		if(willWriteToBins) {
+			bin = binsAtStartFrame[binID];
+		}
+		else {
+			bin = bins[binID];
+		} 
+
+		binLoad = bin.load * binIDsSafetyMods[binIndex];
 		binContents = bin.contents;
 
 		for(uint contentIndex = 0; contentIndex < binLoad; contentIndex++){
@@ -534,6 +560,11 @@ void InitBins(uint3 id : SV_DispatchThreadID) {
 	bins[id.x] = bin;
 }
 
+[numthreads(BINS_THREAD_COUNT, 1, 1)]
+void CacheBinStates(uint3 id : SV_DispatchThreadID){
+	binsAtStartFrame[id.x] = bins[id.x];
+}
+
 // called continuosly
 [numthreads(OUTPUT_THREAD_COUNT_X, OUTPUT_THREAD_COUNT_Y, 1)]
 void ClearOutputTexture(uint3 id : SV_DispatchThreadID) {
@@ -588,7 +619,7 @@ void CacheParticlesInBins(uint3 id : SV_DispatchThreadID){
 	else{
 		uint clusterLoad;
 		uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
-		GetNeighboringParticles(bin.posX, bin.posY, clusterLoad, clusterContents);
+		GetNeighboringParticles(bin.posX, bin.posY, true, clusterLoad, clusterContents);
 
 		for(uint i = 0; i < clusterLoad; i++){
 			int particleIndex = clusterContents[i];	
@@ -620,10 +651,23 @@ void CacheParticleNeighbors(uint3 id : SV_DispatchThreadID){
 
 	uint clusterLoad;
 	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
-	GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
+	GetNeighboringParticles(particle.binPosX, particle.binPosY, false, clusterLoad, clusterContents);
 
 	particle.clusterLoad = clusterLoad;
 	particle.clusterContents = clusterContents;
+
+	particle.debug1 = bins[GetBinIDFromBinPos(particle.binPosX, particle.binPosY)].load;
+	particle.debug2 = clusterLoad;
+	particle.debug3 = clusterContents[0];
+	particle.debug4 = clusterContents[1];
+	particle.debug5 = clusterContents[2];
+	particle.debug6 = clusterContents[3];
+	particle.debug7 = clusterContents[4];
+	particle.debug8 = clusterContents[5];
+	particle.debug9 = clusterContents[6];
+	particle.debug10 = clusterContents[7];
+	particle.debug12 = clusterContents[8];
+	particle.debug13 = clusterContents[9];
 
 	particles[id.x] = particle;
 }
@@ -884,7 +928,8 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 	// velocity = particle.velocity;
 
 	float temp = (particle.temperature / MAX_TEMPERATURE);
-	output[particle.pos] = id.x == debugIndex ? float4(0.0, 0.5, 1.0, particle.isActive) : float4(temp, 0, 1 - temp, particle.isActive);
+	// output[particle.pos] = id.x == debugIndex ? float4(0.0, 0.5, 1.0, particle.isActive) : float4(temp, 0, 1 - temp, particle.isActive);
+	output[particle.pos] = float4((particle.binPosX + particle.binPosY) % 2, 1 - ((particle.binPosX + particle.binPosY) % 2), id.x == debugIndex ? 1 : 0, 1);
 	// output[particle.pos] = float4(0, 0, 0, 1);
 
 
@@ -896,8 +941,14 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 
 	half isDirty = clamp(signAbs(particle.binPosX - oldBinPosX) + signAbs(particle.binPosY - oldBinPosY), 0.0, 1.0);
 	if(isDirty){ // TODO: is it better/worse to assign this inside an if-statement?
-		bins[GetBinIDFromBinPos(oldBinPosX, oldBinPosY)].isDirty = 1;
-		bins[GetBinIDFromBinPos(particle.binPosX, particle.binPosY)].isDirty = 1;
+		uint binIDOld = GetBinIDFromBinPos(oldBinPosX, oldBinPosY);
+		uint binIDNew = GetBinIDFromBinPos(particle.binPosX, particle.binPosY);
+		Bin binOld = bins[binIDOld];
+		Bin binNew = bins[binIDNew];
+		binOld.isDirty = 1;
+		binNew.isDirty = 1;
+		bins[binIDOld] = binOld;
+		bins[binIDNew] = binNew;
 	}
 
 	particle.temperatureStartFrame = particle.temperature;
