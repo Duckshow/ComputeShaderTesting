@@ -191,8 +191,8 @@ public class ElementSimulator : MonoBehaviour {
 
 	private const int THREAD_COUNT_MAX = 1024;
 
-	private const int START_PARTICLE_COUNT = 8192; // must be divisible by THREAD_COUNT_X!
-	private const int START_PARTICLE_COUNT_ACTIVE = 8192;
+	private const int START_PARTICLE_COUNT = 131072; // must be divisible by THREAD_COUNT_X!
+	private const int START_PARTICLE_COUNT_ACTIVE = 131072;
 	
 	//#region[rgba(80, 0, 0, 1)] | WARNING: shared with ElementSimulator.compute! must be equal!
 
@@ -203,8 +203,8 @@ public class ElementSimulator : MonoBehaviour {
 
 	private const int THREAD_COUNT_X = 64;
 	private const int PIXELS_PER_TILE_EDGE = 32;
-	private const int GRID_WIDTH_TILES = 32;
-	private const int GRID_HEIGHT_TILES = 32;
+	private const int GRID_WIDTH_TILES = 128;
+	private const int GRID_HEIGHT_TILES = 128;
 	private const int GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
 	private const int GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
 	private const int BIN_SIZE = 8;
@@ -228,6 +228,7 @@ public class ElementSimulator : MonoBehaviour {
 	private const string KERNEL_APPLYHEAT = "ApplyHeat";
 	private const string KERNEL_COMPUTEFORCES = "ComputeForces";
 	private const string KERNEL_INTEGRATE = "Integrate";
+	private const string KERNEL_POSTPROCESS = "PostProcess";
 	private int kernelID_Init;
 	private int kernelID_InitBins;
 	private int kernelID_CacheBinStates;
@@ -240,6 +241,7 @@ public class ElementSimulator : MonoBehaviour {
 	private int kernelID_ApplyHeat;
 	private int kernelID_ComputeForces;
 	private int kernelID_Integrate;
+	private int kernelID_PostProcess;
 
 	// properties
 	private const string PROPERTY_BINS = "bins";
@@ -372,6 +374,7 @@ public class ElementSimulator : MonoBehaviour {
 		kernelID_ApplyHeat = shader.FindKernel(KERNEL_APPLYHEAT);
 		kernelID_ComputeForces = shader.FindKernel(KERNEL_COMPUTEFORCES);
 		kernelID_Integrate = shader.FindKernel(KERNEL_INTEGRATE);
+		kernelID_PostProcess = shader.FindKernel(KERNEL_POSTPROCESS);
 
 		shaderPropertyID_bins = Shader.PropertyToID(PROPERTY_BINS);
 		shaderPropertyID_binsAtStartFrame = Shader.PropertyToID(PROPERTY_BINSATSTARTFRAME);
@@ -422,7 +425,7 @@ public class ElementSimulator : MonoBehaviour {
 					x = GRID_WIDTH_PIXELS - 1;
 				}
 
-				float spacing = 8.0f;
+				float spacing = 6.0f;
 				if (reverse){
 					y -= spacing;
 					if (y < 0){
@@ -458,7 +461,7 @@ public class ElementSimulator : MonoBehaviour {
 			particle.Pos = new Vector2(x + Random.value * 1.0f, y);
 			// particle.Temperature = Random.Range(0, 1000);
 			// particle.Temperature = x < GRID_WIDTH_PIXELS * 0.5f ? 10000 : 0;
-			particle.Temperature = reverse ? 200 : 350;
+			particle.Temperature = reverse ? 200 : 500;
 			particle.TemperatureStartFrame = particle.Temperature;
 			particle.ElementIndex = 0;
 			particle.IsActive = Mathf.Clamp01(Mathf.Sign(START_PARTICLE_COUNT_ACTIVE - (i + 1)));
@@ -561,7 +564,8 @@ public class ElementSimulator : MonoBehaviour {
 		// // ComputePressure
 		if (isFirstFrame){
 			shader.SetBuffer(kernelID_ComputePressure, shaderPropertyID_bins, bufferBins);
-			shader.SetBuffer(kernelID_ComputePressure, shaderPropertyID_binsAtStartFrame, bufferBinsAtStartFrame);			shader.SetBuffer(kernelID_ComputePressure, shaderPropertyID_particles, bufferParticles);
+			shader.SetBuffer(kernelID_ComputePressure, shaderPropertyID_binsAtStartFrame, bufferBinsAtStartFrame);			
+			shader.SetBuffer(kernelID_ComputePressure, shaderPropertyID_particles, bufferParticles);
 		}
 		shader.Dispatch(kernelID_ComputePressure, particlesThreadGroupCountX, 1, 1);
 
@@ -571,14 +575,16 @@ public class ElementSimulator : MonoBehaviour {
 			// ComputeHeat
 			if (isFirstFrame){
 			shader.SetBuffer(kernelID_ComputeHeat, shaderPropertyID_bins, bufferBins);
-			shader.SetBuffer(kernelID_ComputeHeat, shaderPropertyID_binsAtStartFrame, bufferBinsAtStartFrame);				shader.SetBuffer(kernelID_ComputeHeat, shaderPropertyID_particles, bufferParticles);
+			shader.SetBuffer(kernelID_ComputeHeat, shaderPropertyID_binsAtStartFrame, bufferBinsAtStartFrame);				
+			shader.SetBuffer(kernelID_ComputeHeat, shaderPropertyID_particles, bufferParticles);
 			}
 			shader.Dispatch(kernelID_ComputeHeat, particlesThreadGroupCountX, 1, 1);
 
 			// ApplyHeat
 			if (isFirstFrame){
 			shader.SetBuffer(kernelID_ApplyHeat, shaderPropertyID_bins, bufferBins);
-			shader.SetBuffer(kernelID_ApplyHeat, shaderPropertyID_binsAtStartFrame, bufferBinsAtStartFrame);				shader.SetBuffer(kernelID_ApplyHeat, shaderPropertyID_particles, bufferParticles);
+			shader.SetBuffer(kernelID_ApplyHeat, shaderPropertyID_binsAtStartFrame, bufferBinsAtStartFrame);				
+			shader.SetBuffer(kernelID_ApplyHeat, shaderPropertyID_particles, bufferParticles);
 			}
 			shader.Dispatch(kernelID_ApplyHeat, particlesThreadGroupCountX, 1, 1);
 		}
@@ -586,17 +592,25 @@ public class ElementSimulator : MonoBehaviour {
 		// ComputeForces
 		if (isFirstFrame){
 			shader.SetBuffer(kernelID_ComputeForces, shaderPropertyID_bins, bufferBins);
-			shader.SetBuffer(kernelID_ComputeForces, shaderPropertyID_binsAtStartFrame, bufferBinsAtStartFrame);			shader.SetBuffer(kernelID_ComputeForces, shaderPropertyID_particles, bufferParticles);
+			shader.SetBuffer(kernelID_ComputeForces, shaderPropertyID_binsAtStartFrame, bufferBinsAtStartFrame);			
+			shader.SetBuffer(kernelID_ComputeForces, shaderPropertyID_particles, bufferParticles);
 		}
 		shader.Dispatch(kernelID_ComputeForces, particlesThreadGroupCountX, 1, 1);
 
 		// Integrate
 		if (isFirstFrame){
 			shader.SetBuffer(kernelID_Integrate, shaderPropertyID_bins, bufferBins);
-			shader.SetBuffer(kernelID_Integrate, shaderPropertyID_binsAtStartFrame, bufferBinsAtStartFrame);			shader.SetBuffer(kernelID_Integrate, shaderPropertyID_particles, bufferParticles);
+			shader.SetBuffer(kernelID_Integrate, shaderPropertyID_binsAtStartFrame, bufferBinsAtStartFrame);			
+			shader.SetBuffer(kernelID_Integrate, shaderPropertyID_particles, bufferParticles);
 			shader.SetTexture(kernelID_Integrate, shaderPropertyID_output, output);
 		}
 		shader.Dispatch(kernelID_Integrate, particlesThreadGroupCountX, 1, 1);
+
+		// PostProcess
+		if (isFirstFrame){
+			shader.SetTexture(kernelID_PostProcess, shaderPropertyID_output, output);
+		}
+		shader.Dispatch(kernelID_PostProcess, outputThreadGroupCountX, outputThreadGroupCountY, 1);
 
 		// material.mainTexture = binsDirty;
 		// material.mainTexture = binLoads;
@@ -604,7 +618,7 @@ public class ElementSimulator : MonoBehaviour {
 		material.mainTexture = output;
 
 
-		bufferParticles.GetData(particles);
+		// bufferParticles.GetData(particles);
 		// ParticleSystem.Particle[] unityParticles = new ParticleSystem.Particle[particles.Length];
 		// int particleCount = particleSys.GetParticles(unityParticles);
 		// for (int i = 0; i < unityParticles.Length; i++){

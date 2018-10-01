@@ -10,6 +10,7 @@
 #pragma kernel ApplyHeat
 #pragma kernel ComputeForces
 #pragma kernel Integrate
+#pragma kernel PostProcess
 
 static const uint HIGHEST_VALUE_16BIT = 32768;
 
@@ -25,7 +26,7 @@ static const float MASS = 128.0; // assume all particles have the same mass
 static const float VISC = 6.0; // viscosity constant
 static const float DT = 0.001;// 0.0008; // integration timestep
 static const float DENSITY_OFFSET = 0.9;// 1.0;//0.825; // make SPIKY_GRAD apply force earlier (particles don't have to be as close)
-static const float VISC_OFFSET = 1.0;//1.0;//0.825; // make VISC_LAP apply force earlier (particles don't have to be as close)
+static const float VISC_OFFSET = 0.8;//1.0;//1.0;//0.825; // make VISC_LAP apply force earlier (particles don't have to be as close)
 static const float PI = 3.14159265359;
 // smoothing kernels defined in Müller and their gradients
 static const float POLY6 = 315.0 / (65.0 * PI * pow(H, 9.0));
@@ -39,12 +40,12 @@ static const float BOUND_DAMPING = -0.5;
 static const float MAX_TEMPERATURE = 1000.0;
 
 static const float THERMAL_DIFFUSIVITY = 0.1;
-static const float REPEL_STRENGTH_MIN = 1.0;//10.0;
+static const float REPEL_STRENGTH_MIN = 1.5;//10.0;
 static const float REPEL_STRENGTH_MAX = 20.0;//20.0;//40.0;
 static const float REPEL_FACTOR_MIN = 1.0 / REPEL_STRENGTH_MAX;
 static const float REPEL_FACTOR_MAX = 1.0 / REPEL_STRENGTH_MIN;
 static const float CLUSTERING_RESISTANCE = 1.0;//20.0;
-static const float SURFACE_TENSION_WATER = 25.0; // TODO: doesn't appear to work??
+static const float SURFACE_TENSION_WATER = 1.0;//250.0; // TODO: doesn't appear to work??
 
 static const float STATE_CORRECTION_OFFSET = 0.000001; // offset to ensure two states can't be == 1 at the same time
 static const float REPEL_STRENGTH_SMOOTHING_START_SOLID = 0.9;
@@ -61,8 +62,8 @@ static const int BINS_THREAD_COUNT = 64;
 
 static const int THREAD_COUNT_X = 64; // TODO: this can in theory go up to 1024 - make it happen!
 static const uint PIXELS_PER_TILE_EDGE = 32;
-static const uint GRID_WIDTH_TILES = 32;
-static const uint GRID_HEIGHT_TILES = 32;
+static const uint GRID_WIDTH_TILES = 128;
+static const uint GRID_HEIGHT_TILES = 128;
 static const uint GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
 static const uint GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
 static const uint BIN_SIZE = 8;
@@ -878,18 +879,18 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 
 		uint areParticlesDifferent = signAbs(id.x - neighborIndex);
 		uint isTouchingNeighbor = step(r, H);
-		uint shouldApplyAnything = isTouchingNeighbor * areParticlesDifferent * particle.isActive * otherParticle.isActive;
+		uint shouldApplyAnything = areParticlesDifferent * particle.isActive * otherParticle.isActive;
 
 		// compute pressure force contribution
-		fpress += shouldApplyAnything * -diffNormal * otherParticle.GetMass() * (particle.pressure + otherParticle.pressure) / (2.0 * otherParticle.density) * SPIKY_GRAD * pow(H - r, 2.0) * CLUSTERING_RESISTANCE;
+		fpress += shouldApplyAnything * isTouchingNeighbor * -diffNormal * otherParticle.GetMass() * (particle.pressure + otherParticle.pressure) / (2.0 * otherParticle.density) * SPIKY_GRAD * pow(H - r, 2.0) * CLUSTERING_RESISTANCE;
 		// compute viscosity force contribution
-		fvisc += shouldApplyAnything * otherParticle.GetViscosity() * otherParticle.GetMass() * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
+		fvisc += shouldApplyAnything * isTouchingNeighbor * otherParticle.GetViscosity() * otherParticle.GetMass() * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
 		
 		float shouldApplySurfaceTension = shouldApplyAnything * floor((step(r, H_SURFACE_TENSION) + particle.IsLiquid()) * 0.5);
 		fsurftens += shouldApplySurfaceTension * diffNormal * VISC_LAP * SURFACE_TENSION_WATER;
 
 		// bounce off frozen particles
-		float shouldApplyBounce = shouldApplyAnything * floor((isTouchingNeighbor + otherParticle.IsSolid()) / 2.0);
+		float shouldApplyBounce = shouldApplyAnything * isTouchingNeighbor * floor((isTouchingNeighbor + otherParticle.IsSolid()) / 2.0);
 		particle.velocity *= lerp(1.0, diffNormal * BOUND_DAMPING, shouldApplyBounce);
 	}
 
@@ -928,9 +929,11 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 	// velocity = particle.velocity;
 
 	float temp = (particle.temperature / MAX_TEMPERATURE);
-	// output[particle.pos] = id.x == debugIndex ? float4(0.0, 0.5, 1.0, particle.isActive) : float4(temp, 0, 1 - temp, particle.isActive);
-	output[particle.pos] = float4((particle.binPosX + particle.binPosY) % 2, 1 - ((particle.binPosX + particle.binPosY) % 2), id.x == debugIndex ? 1 : 0, 1);
+	// output[particle.pos] = float4(temp, 0, 1 - temp, particle.isActive);
+	// output[particle.pos] = float4(0, 1, 0, particle.isActive);
+	// output[particle.pos] = float4((particle.binPosX + particle.binPosY) % 2, 1 - ((particle.binPosX + particle.binPosY) % 2), id.x == debugIndex ? 1 : 0, 1);
 	// output[particle.pos] = float4(0, 0, 0, 1);
+	output[particle.pos] = float4(particle.IsSolid() + (particle.IsLiquid() * 0.75) + (particle.IsGas() * 0.5), 0, 0, 1);
 
 
 	 // for next frame
@@ -956,4 +959,22 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 	particle.heatToGive.xyzw = 0.0;
 
 	particles[id.x] = particle;
+}
+
+[numthreads(OUTPUT_THREAD_COUNT_X, OUTPUT_THREAD_COUNT_Y, 1)]
+void PostProcess(uint3 id : SV_DispatchThreadID){
+	float4 pixel = output[id.xy];
+
+	half finalOpacity = pixel.r;
+
+	
+
+
+	pixel.xyzw = 0;
+	pixel.a = 1;
+	pixel.r = finalOpacity;
+	pixel.g = finalOpacity;
+	pixel.b = finalOpacity;
+
+	output[id.xy] = pixel;
 }
