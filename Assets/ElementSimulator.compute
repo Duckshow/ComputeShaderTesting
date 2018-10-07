@@ -11,18 +11,19 @@
 #pragma kernel ComputeForces
 #pragma kernel Integrate
 #pragma kernel PostProcess
+#pragma kernel FinalizePostProcess
 
 static const uint HIGHEST_VALUE_16BIT = 32768;
 
 // solver parameters
-static const float2 G = float2(0, 150 * -9.8); // external (gravitational) forces
-static const float REST_DENS = 1500;// 300;// 1000; // rest density (basically repel, but slightly different)
-static const float GAS_CONST = 20;// 500; // const for equation of state
-static const float H = 4.0; // interaction radius
+static const float2 G = float2(0, 75 * -9.8); // external (gravitational) forces
+static const float REST_DENS = 2500;// 300;// 1000; // rest density (basically repel, but slightly different)
+static const float GAS_CONST = 1000;// 500; // const for equation of state
+static const float H = 1.0; // interaction radius
 static const float HSQ = H * H; // radius^2 for optimization
 static const float HSQ_TEMPERATURE = HSQ * 12.0; // interaction radius
 static const float H_SURFACE_TENSION = H * 12.0; // interaction radius
-static const float MASS = 128.0; // assume all particles have the same mass
+static const float MASS = 16.0; // assume all particles have the same mass
 static const float VISC = 6.0; // viscosity constant
 static const float DT = 0.001;// 0.0008; // integration timestep
 static const float DENSITY_OFFSET = 0.9;// 1.0;//0.825; // make SPIKY_GRAD apply force earlier (particles don't have to be as close)
@@ -40,8 +41,8 @@ static const float BOUND_DAMPING = -0.5;
 static const float MAX_TEMPERATURE = 1000.0;
 
 static const float THERMAL_DIFFUSIVITY = 0.1;
-static const float REPEL_STRENGTH_MIN = 1.5;//10.0;
-static const float REPEL_STRENGTH_MAX = 20.0;//20.0;//40.0;
+static const float REPEL_STRENGTH_MIN = 5.0;
+static const float REPEL_STRENGTH_MAX = 15.0;
 static const float REPEL_FACTOR_MIN = 1.0 / REPEL_STRENGTH_MAX;
 static const float REPEL_FACTOR_MAX = 1.0 / REPEL_STRENGTH_MIN;
 static const float CLUSTERING_RESISTANCE = 1.0;//20.0;
