@@ -10,10 +10,12 @@ public class ElementSimulator : MonoBehaviour {
 		public uint PosY;
 		public uint IsDirty;
 		public uint Load;
+		public uint ClusterLoad;
 		public fixed uint Contents[BIN_MAX_AMOUNT_OF_CONTENT];
+		public Vector4 Color;
 
 		public static int GetStride() {
-			return sizeof(uint) * 5 + sizeof(uint) * BIN_MAX_AMOUNT_OF_CONTENT; // must correspond to variables!
+			return sizeof(uint) * 6 + sizeof(uint) * BIN_MAX_AMOUNT_OF_CONTENT + sizeof(float) * 4; // must correspond to variables!
 		}
 	};
 
@@ -189,22 +191,20 @@ public class ElementSimulator : MonoBehaviour {
 
 	private const int THREAD_COUNT_MAX = 1024;
 
-	private const int START_PARTICLE_COUNT = 4096; // must be divisible by THREAD_COUNT_X!
-	private const int START_PARTICLE_COUNT_ACTIVE = 4096;
+	private const int START_PARTICLE_COUNT = 131072; // must be divisible by THREAD_COUNT_X!
+	private const int START_PARTICLE_COUNT_ACTIVE = 131072;
 	
 	//#region[rgba(80, 0, 0, 1)] | WARNING: shared with ElementSimulator.compute! must be equal!
 
 	private const int OUTPUT_THREAD_COUNT_X = 32;
 	private const int OUTPUT_THREAD_COUNT_Y = 32;
-	private const int POSTPROCESS_THREAD_COUNT_X = 8;
-	private const int POSTPROCESS_THREAD_COUNT_Y = 8;
 
 	private const int BINS_THREAD_COUNT = 32;
 
 	private const int THREAD_COUNT_X = 64;
 	private const int PIXELS_PER_TILE_EDGE = 32;
-	private const int GRID_WIDTH_TILES = 16;
-	private const int GRID_HEIGHT_TILES = 16;
+	private const int GRID_WIDTH_TILES = 64;
+	private const int GRID_HEIGHT_TILES = 64;
 	private const int GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
 	private const int GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
 	private const int BIN_SIZE = 8;
@@ -228,7 +228,7 @@ public class ElementSimulator : MonoBehaviour {
 	private const string KERNEL_APPLYHEAT = "ApplyHeat";
 	private const string KERNEL_COMPUTEFORCES = "ComputeForces";
 	private const string KERNEL_INTEGRATE = "Integrate";
-	private const string KERNEL_MARKPIXELSFORPOSTPROCESS = "MarkPixelsForPostProcess";
+	private const string KERNEL_PREPAREPOSTPROCESS = "PreparePostProcess";
 	private const string KERNEL_POSTPROCESS = "PostProcess";
 	private int kernelID_Init;
 	private int kernelID_InitBins;
@@ -242,7 +242,7 @@ public class ElementSimulator : MonoBehaviour {
 	private int kernelID_ApplyHeat;
 	private int kernelID_ComputeForces;
 	private int kernelID_Integrate;
-	private int kernelID_MarkPixelsForPostProcess;
+	private int kernelID_PreparePostProcess;
 	private int kernelID_PostProcess;
 
 	// properties
@@ -376,7 +376,7 @@ public class ElementSimulator : MonoBehaviour {
 		kernelID_ApplyHeat = shader.FindKernel(KERNEL_APPLYHEAT);
 		kernelID_ComputeForces = shader.FindKernel(KERNEL_COMPUTEFORCES);
 		kernelID_Integrate = shader.FindKernel(KERNEL_INTEGRATE);
-		kernelID_MarkPixelsForPostProcess = shader.FindKernel(KERNEL_MARKPIXELSFORPOSTPROCESS);
+		kernelID_PreparePostProcess = shader.FindKernel(KERNEL_PREPAREPOSTPROCESS);
 		kernelID_PostProcess = shader.FindKernel(KERNEL_POSTPROCESS);
 
 		shaderPropertyID_bins = Shader.PropertyToID(PROPERTY_BINS);
@@ -420,23 +420,40 @@ public class ElementSimulator : MonoBehaviour {
 		float x = 0, y = 0;
 		for (int i = 0; i < particles.Length; i++){
 			if (i > 0){
-				if (!reverse && i >= particles.Length * 0.5f){
+				if (!reverse && i >= particles.Length * 0.33f){
 					reverse = true;
-					y = GRID_HEIGHT_PIXELS;
+					// y = GRID_HEIGHT_PIXELS * 1.0f;
+					// x = GRID_WIDTH_PIXELS - 1;
+
+					y = 0;
 					x = GRID_WIDTH_PIXELS - 1;
 				}
 
-				float spacing = 6.0f;
+				float spacing = 4.0f;
+				// if (reverse){
+				// 	y -= spacing;
+				// 	if (y < 0){
+				// 		y = GRID_HEIGHT_PIXELS - 1 - spacing * 0.5f;
+				// 		x -= spacing;
+				// 	}
+				// }
+				// else{
+				// 	y += spacing;
+				// 	if (y >= GRID_HEIGHT_PIXELS * 1.0f){
+				// 		y = spacing * 0.5f;
+				// 		x += spacing;
+				// 	}
+				// }
 				if (reverse){
-					y -= spacing;
-					if (y < 0){
-						y = GRID_HEIGHT_PIXELS - 1 - spacing * 0.5f;
+					y += spacing;
+					if (y >= GRID_HEIGHT_PIXELS * 1.0f){
+						y = spacing * 0.5f;
 						x -= spacing;
 					}
 				}
 				else{
 					y += spacing;
-					if (y >= GRID_HEIGHT_PIXELS * 1.0f){
+					if (y >= GRID_HEIGHT_PIXELS * 0.66f){
 						y = spacing * 0.5f;
 						x += spacing;
 					}
@@ -462,9 +479,9 @@ public class ElementSimulator : MonoBehaviour {
 			particle.Pos = new Vector2(x + Random.value * 1.0f, y);
 			// particle.Temperature = Random.Range(0, 1000);
 			// particle.Temperature = x < GRID_WIDTH_PIXELS * 0.5f ? 10000 : 0;
-			particle.Temperature = reverse ? 200 : 500;
+			particle.Temperature = reverse ? 350 : 200;
 			particle.TemperatureStartFrame = particle.Temperature;
-			particle.ElementIndex = 0;
+			particle.ElementIndex = (uint)(reverse ? 0 : 0);
 			particle.IsActive = Mathf.Clamp01(Mathf.Sign(START_PARTICLE_COUNT_ACTIVE - (i + 1)));
 
 			particles[i] = particle;
@@ -494,8 +511,6 @@ public class ElementSimulator : MonoBehaviour {
 		int particlesThreadGroupCountX = Mathf.CeilToInt(particles.Length / THREAD_COUNT_X);
 		int outputThreadGroupCountX = Mathf.CeilToInt(GRID_WIDTH_PIXELS / OUTPUT_THREAD_COUNT_X);
 		int outputThreadGroupCountY = Mathf.CeilToInt(GRID_HEIGHT_PIXELS / OUTPUT_THREAD_COUNT_Y);
-		int postProcessThreadGroupCountX = Mathf.CeilToInt(GRID_WIDTH_PIXELS / POSTPROCESS_THREAD_COUNT_X);
-		int postProcessThreadGroupCountY = Mathf.CeilToInt(GRID_HEIGHT_PIXELS / POSTPROCESS_THREAD_COUNT_Y);
 
 		shader.SetBool(shaderPropertyID_isFirstFrame, isFirstFrame);
 		shader.SetBool(shaderPropertyID_isEvenFrame, frame % 2 == 0);
@@ -549,20 +564,6 @@ public class ElementSimulator : MonoBehaviour {
 			shader.Dispatch(kernelID_CacheParticleNeighbors, particlesThreadGroupCountX, 1, 1);
 		}
 
-		// MarkPixelsForPostProcess
-		if (isFirstFrame){
-			shader.SetBuffer(kernelID_MarkPixelsForPostProcess, shaderPropertyID_bins, bufferBins);
-			shader.SetTexture(kernelID_MarkPixelsForPostProcess, shaderPropertyID_output, output);
-		}
-		shader.Dispatch(kernelID_MarkPixelsForPostProcess, binsThreadGroupCount, 1, 1);
-
-		// PostProcess
-		if (isFirstFrame){
-			shader.SetBuffer(kernelID_PostProcess, shaderPropertyID_bins, bufferBins);
-			shader.SetTexture(kernelID_PostProcess, shaderPropertyID_output, output);
-		}
-		shader.Dispatch(kernelID_PostProcess, postProcessThreadGroupCountX, postProcessThreadGroupCountY, 1);
-
 		// ComputeDensity
 		if (isFirstFrame){
 			shader.SetBuffer(kernelID_ComputeDensity, shaderPropertyID_bins, bufferBins);
@@ -610,46 +611,21 @@ public class ElementSimulator : MonoBehaviour {
 		}
 		shader.Dispatch(kernelID_Integrate, particlesThreadGroupCountX, 1, 1);
 
-		
+		// PreparePostProcess
+		if (isFirstFrame){
+			shader.SetBuffer(kernelID_PreparePostProcess, shaderPropertyID_bins, bufferBins);
+			shader.SetBuffer(kernelID_PreparePostProcess, shaderPropertyID_particles, bufferParticles);
+			shader.SetTexture(kernelID_PreparePostProcess, shaderPropertyID_output, output);
+		}
+		shader.Dispatch(kernelID_PreparePostProcess, binsThreadGroupCount, 1, 1);
 
-
-		// material.mainTexture = binsDirty;
-		// material.mainTexture = binLoads;
-		// material.mainTexture = bins1_0;
+		// PostProcess
+		if (isFirstFrame){
+			shader.SetBuffer(kernelID_PostProcess, shaderPropertyID_bins, bufferBins);
+			shader.SetTexture(kernelID_PostProcess, shaderPropertyID_output, output);
+		}
+		shader.Dispatch(kernelID_PostProcess, outputThreadGroupCountX, outputThreadGroupCountY, 1);
 		material.mainTexture = output;
-
-
-		// bufferParticles.GetData(particles);
-		// ParticleSystem.Particle[] unityParticles = new ParticleSystem.Particle[particles.Length];
-		// int particleCount = particleSys.GetParticles(unityParticles);
-		// for (int i = 0; i < unityParticles.Length; i++){
-		// 	Particle particle = particles[i];
-		// 	ParticleSystem.Particle unityParticle = unityParticles[i];
-
-		// 	Vector2 worldPos = particle.Pos;
-		// 	worldPos.x = worldPos.x / GRID_WIDTH_PIXELS * GRID_WIDTH_TILES;
-		// 	worldPos.y = worldPos.y / GRID_HEIGHT_PIXELS * GRID_HEIGHT_TILES;
-		// 	worldPos.x -= GRID_WIDTH_TILES * 0.5f;
-		// 	worldPos.y -= GRID_HEIGHT_TILES * 0.5f;
-		// 	unityParticle.position = worldPos;
-
-		// 	Color color = Color.red;// Color.Lerp(Color.blue, Color.red, particle.Temperature / 1000.0f);
-		// 	if (particleIndex == i){
-		// 		color = Color.cyan;
-		// 	}
-		// 	else if (particle.Debug1 > 0){
-		// 		color = Color.green;
-		// 	}
-
-		// 	color.a = particle.IsActive;
-		// 	unityParticle.startColor = color;
-
-		// 	unityParticles[i] = unityParticle;
-		// }
-		// particleSys.SetParticles(unityParticles, particleCount);
-
-		// debugVars[0].Print();
-		// PrintParticle();
 
 		frame++;
 		isFirstFrame = false;

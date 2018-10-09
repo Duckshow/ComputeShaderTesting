@@ -10,26 +10,24 @@
 #pragma kernel ApplyHeat
 #pragma kernel ComputeForces
 #pragma kernel Integrate
-#pragma kernel MarkPixelsForPostProcess
+#pragma kernel PreparePostProcess
 #pragma kernel PostProcess
-#pragma kernel FinalizePostProcess
-
-static const uint HIGHEST_VALUE_16BIT = 32768;
 
 // solver parameters
 static const float2 G = float2(0, 75 * -9.8); // external (gravitational) forces
 static const float REST_DENS = 2500;// 300;// 1000; // rest density (basically repel, but slightly different)
-static const float GAS_CONST = 1000;// 500; // const for equation of state
+static const float GAS_CONST = 900;// 500; // const for equation of state
 static const float H = 1.0; // interaction radius
 static const float HSQ = H * H; // radius^2 for optimization
 static const float HSQ_TEMPERATURE = HSQ * 12.0; // interaction radius
 static const float H_SURFACE_TENSION = H * 12.0; // interaction radius
-static const float MASS = 16.0; // assume all particles have the same mass
-static const float VISC = 6.0; // viscosity constant
+static const float PARTICLE_MASS = 16.0; // assume all particles have the same mass
+static const float PARTICLE_VISC = 6.0; // viscosity constant
 static const float DT = 0.001;// 0.0008; // integration timestep
 static const float DENSITY_OFFSET = 0.9;// 1.0;//0.825; // make SPIKY_GRAD apply force earlier (particles don't have to be as close)
 static const float VISC_OFFSET = 0.8;//1.0;//1.0;//0.825; // make VISC_LAP apply force earlier (particles don't have to be as close)
 static const float PI = 3.14159265359;
+
 // smoothing kernels defined in Müller and their gradients
 static const float POLY6 = 315.0 / (65.0 * PI * pow(H, 9.0));
 static const float SPIKY_GRAD = -45.0 / (PI * pow(H * DENSITY_OFFSET, 6.0));
@@ -40,34 +38,34 @@ static const float EPS = H; // boundary epsilon
 static const float BOUND_DAMPING = -0.5;
 
 static const float MAX_TEMPERATURE = 1000.0;
-
-static const float THERMAL_DIFFUSIVITY = 0.1;
-static const float REPEL_STRENGTH_MIN = 5.0;
-static const float REPEL_STRENGTH_MAX = 15.0;
+static const float THERMAL_DIFFUSIVITY = 0.2;
+static const float REPEL_STRENGTH_MIN = 4.0;
+static const float REPEL_STRENGTH_MAX = 7.0;
 static const float REPEL_FACTOR_MIN = 1.0 / REPEL_STRENGTH_MAX;
 static const float REPEL_FACTOR_MAX = 1.0 / REPEL_STRENGTH_MIN;
 static const float CLUSTERING_RESISTANCE = 1.0;//20.0;
-static const float SURFACE_TENSION_WATER = 1.0;//250.0; // TODO: doesn't appear to work??
+static const float SURFACE_TENSION_WATER = 25.0;//250.0; // TODO: doesn't appear to work??
 
 static const float STATE_CORRECTION_OFFSET = 0.000001; // offset to ensure two states can't be == 1 at the same time
 static const float REPEL_STRENGTH_SMOOTHING_START_SOLID = 0.9;
 
 static const float ALMOST_BUT_NOT_QUITE_ZERO = 0.00001; // used to prevent division by zero
 
+static const half POSTPROCESS_BLURMOD_CLUSTERLOAD_STRENGTH = 100;// 35.0;
+static const half POSTPROCESS_BLURMOD_LIQUID_GASEOUSNESS = 0.25;
+static const half POSTPROCESS_BLURMOD_GAS_GASEOUSNESS = 1.0;
 
 //#region[rgba(80, 0, 0, 1)] | WARNING: shared with ElementSimulator.cs! must be equal!
 
 static const int OUTPUT_THREAD_COUNT_X = 32;
 static const int OUTPUT_THREAD_COUNT_Y = 32;
-static const int POSTPROCESS_THREAD_COUNT_X = 8;
-static const int POSTPROCESS_THREAD_COUNT_Y = 8;
 
 static const int BINS_THREAD_COUNT = 32;
 
 static const int THREAD_COUNT_X = 64; // TODO: this can in theory go up to 1024 - make it happen!
 static const uint PIXELS_PER_TILE_EDGE = 32;
-static const uint GRID_WIDTH_TILES = 16;
-static const uint GRID_HEIGHT_TILES = 16;
+static const uint GRID_WIDTH_TILES = 64;
+static const uint GRID_HEIGHT_TILES = 64;
 static const uint GRID_WIDTH_PIXELS = PIXELS_PER_TILE_EDGE * GRID_WIDTH_TILES;
 static const uint GRID_HEIGHT_PIXELS = PIXELS_PER_TILE_EDGE * GRID_HEIGHT_TILES;
 static const uint BIN_SIZE = 8;
@@ -81,37 +79,59 @@ static const uint BIN_CLUSTER_CONTENT_MAX = BIN_CLUSTER_SIZE * BIN_MAX_AMOUNT_OF
 static const uint BIN_PIXEL_COUNT = BIN_SIZE * BIN_SIZE;
 
 
-static const int ELEMENT_COUNT = 1;
+static const int ELEMENT_COUNT = 2;
 
-static const float Mass[ELEMENT_COUNT] = { 
-	MASS * 1.0 
+static const half MASS[ELEMENT_COUNT] = { 
+	PARTICLE_MASS * 1.0,
+	PARTICLE_MASS * 1.0,
 };
-static const float Viscosity[ELEMENT_COUNT] = {
-	VISC * 1.0
+static const half VISCOSITY[ELEMENT_COUNT] = {
+	PARTICLE_VISC * 1.0,
+	PARTICLE_VISC * 1.0,
 };
-static const float TemperatureFreezingPoint[ELEMENT_COUNT] = {
-	273.15
+static const half TEMPERATURE_FREEZING_POINT[ELEMENT_COUNT] = {
+	273.15,
+	273.15,
 };
-static const float TemperatureBoilingPoint[ELEMENT_COUNT] = {
-	373.15
+static const half TEMPERATURE_BOILING_POINT[ELEMENT_COUNT] = {
+	373.15,
+	373.15,
 };
-static const float RepelStrengthSolid[ELEMENT_COUNT] = {
-	1.75
+static const half REPEL_STRENGTH_SOLID[ELEMENT_COUNT] = {
+	1.75,
+	1.75,
 };
-static const float RepelStrengthLiquid[ELEMENT_COUNT] = {
-	1.5
+static const half REPEL_STRENGTH_LIQUID[ELEMENT_COUNT] = {
+	1.5,
+	1.5,
 };
-static const float RepelStrengthGas[ELEMENT_COUNT] = {
-	2.0
+static const half REPEL_STRENGTH_GAS[ELEMENT_COUNT] = {
+	2.0,
+	2.0,
 };
-static const float ThermalDiffusivitySolid[ELEMENT_COUNT] = {
-	1.0
+static const half THERMAL_DIFFUSIVITY_SOLID[ELEMENT_COUNT] = {
+	1.0,
+	1.0,
 };
-static const float ThermalDiffusivityLiquid[ELEMENT_COUNT] = {
-	0.75
+static const half THERMAL_DIFFUSIVITY_LIQUID[ELEMENT_COUNT] = {
+	0.75,
+	0.75,
 };
-static const float ThermalDiffusivityGas[ELEMENT_COUNT] = {
-	0.5
+static const half THERMAL_DIFFUSIVITY_GAS[ELEMENT_COUNT] = {
+	0.5,
+	0.5,
+};
+static const half4 COLOR_SOLID[ELEMENT_COUNT] = {
+	half4(0.75, 1.0, 1.0, 1.0),
+	half4(1.0, 1.0, 0.25, 1.0),
+};
+static const half4 COLOR_LIQUID[ELEMENT_COUNT] = {
+	half4(0.5, 1.0, 1.0, 0.75),
+	half4(1.0, 1.0, 0.0, 0.75),
+};
+static const half4 COLOR_GAS[ELEMENT_COUNT] = {
+	half4(1.0, 1.0, 1.0, 0.5),
+	half4(1.0, 1.0, 0.5, 0.5),
 };
 
 
@@ -146,19 +166,21 @@ struct Bin{ // WARNING: variables must correspond to ElementSimulator.cs's Bin!
 	uint posY;
 	uint isDirty;
 	uint load;
+	uint clusterLoad;
 	uint contents[BIN_MAX_AMOUNT_OF_CONTENT];
+	half4 color;
 };
 
 struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's Particle
-	float2 pos; // *
+	float2 pos;
 	float2 velocity; 
 	float2 force;
 	float density;
 	float pressure;
 	float temperature;
-	float temperatureStartFrame;  // *
+	float temperatureStartFrame; 
 	float repelFactor;
-	half isActive;  // *
+	half isActive; 
 	half4 particlesToHeat;
 	half4 heatToGive;
 	half debugTemp;
@@ -177,58 +199,55 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 	half debug12;
 	half debug13;
 
-	// 92 byte
-	// half padding_0;
-	// half padding_1;
-	// half padding_2;
-	// half padding_3;
-	// half padding_4;
-	// half padding_5;
-	// half padding_6;
-	// half padding_7;
-	// half padding_8;
-	// 128 byte
+	// TODO: try to reach multiple of 128 byte
 
-	uint elementIndex;  // *
+	uint elementIndex; 
 
 	uint binID;
 	uint clusterLoad;
 	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
 
 
-	float GetMass()						{ return Mass[elementIndex]; }
-	float GetViscosity()				{ return Viscosity[elementIndex]; }
-	float GetFreezingPoint()			{ return TemperatureFreezingPoint[elementIndex]; }
-	float GetBoilingPoint()				{ return TemperatureBoilingPoint[elementIndex]; }
-	float GetRepelStrengthSolid()		{ return RepelStrengthSolid[elementIndex]; }
-	float GetRepelStrengthLiquid()		{ return RepelStrengthLiquid[elementIndex]; }
-	float GetRepelStrengthGas()			{ return RepelStrengthGas[elementIndex]; }
-	float GetThermalDiffusivitySolid()	{ return ThermalDiffusivitySolid[elementIndex]; }
-	float GetThermalDiffusivityLiquid()	{ return ThermalDiffusivityLiquid[elementIndex]; }
-	float GetThermalDiffusivityGas()	{ return ThermalDiffusivityGas[elementIndex]; }
-	
-	float IsSolid() {
+	half GetMass()						{ return MASS[elementIndex]; }
+	half GetViscosity()					{ return VISCOSITY[elementIndex]; }
+	half GetFreezingPoint()				{ return TEMPERATURE_FREEZING_POINT[elementIndex]; }
+	half GetBoilingPoint()				{ return TEMPERATURE_BOILING_POINT[elementIndex]; }
+	half GetRepelStrengthSolid()		{ return REPEL_STRENGTH_SOLID[elementIndex]; }
+	half GetRepelStrengthLiquid()		{ return REPEL_STRENGTH_LIQUID[elementIndex]; }
+	half GetRepelStrengthGas()			{ return REPEL_STRENGTH_GAS[elementIndex]; }
+	half GetThermalDiffusivitySolid()	{ return THERMAL_DIFFUSIVITY_SOLID[elementIndex]; }
+	half GetThermalDiffusivityLiquid()	{ return THERMAL_DIFFUSIVITY_LIQUID[elementIndex]; }
+	half GetThermalDiffusivityGas()		{ return THERMAL_DIFFUSIVITY_GAS[elementIndex]; }
+	half4 GetColorSolid()				{ return COLOR_SOLID[elementIndex]; }
+	half4 GetColorLiquid()				{ return COLOR_LIQUID[elementIndex]; }
+	half4 GetColorGas()					{ return COLOR_GAS[elementIndex]; }
+
+	half IsSolid() {
 		return step(temperatureStartFrame, GetFreezingPoint() + STATE_CORRECTION_OFFSET);
 	}
 
-	float IsLiquid() {
+	half IsLiquid() {
 		return step(temperatureStartFrame, GetBoilingPoint() - STATE_CORRECTION_OFFSET) - IsSolid();
 	}
 
-	float IsGas() {
+	half IsGas() {
 		return step(GetBoilingPoint() - STATE_CORRECTION_OFFSET, temperatureStartFrame);
 	}
 
-	float GetThermalDiffusivity() {
-		return THERMAL_DIFFUSIVITY * ((IsSolid() * GetThermalDiffusivitySolid()) + (IsLiquid() * GetThermalDiffusivityLiquid()) + (IsGas() * GetThermalDiffusivityGas()));
+	half4 GetColor(){
+		return IsSolid() * GetColorSolid() + IsLiquid() * GetColorLiquid() + IsGas() * GetColorGas();
 	}
 
-	float GetRepelStrengthCurrent()	{ 
+	half GetThermalDiffusivity() {
+		return THERMAL_DIFFUSIVITY * (IsSolid() * GetThermalDiffusivitySolid() + IsLiquid() * GetThermalDiffusivityLiquid() + IsGas() * GetThermalDiffusivityGas());
+	}
+
+	half GetRepelStrengthCurrent()	{ 
 		return IsSolid() * GetRepelStrengthSolid() + IsLiquid() * GetRepelStrengthLiquid() + IsGas() * GetRepelStrengthGas(); 
 	}
 
 	void SetTemperature(float temp){
-		temperature = temp;// clamp(temp, 0.0, MAX_TEMPERATURE);
+		temperature = temp;
 
 		float isSolid = IsSolid();
 		float isLiquid = IsLiquid();
@@ -496,7 +515,7 @@ void CacheBinStates(uint3 id : SV_DispatchThreadID){
 // called continuosly
 [numthreads(OUTPUT_THREAD_COUNT_X, OUTPUT_THREAD_COUNT_Y, 1)]
 void ClearOutputTexture(uint3 id : SV_DispatchThreadID) {
-	output[id.xy] = float4(0.0, 0.0, 0.0, 1.0);
+	output[id.xy] = float4(0.0, 0.0, 0.0, 0.0);
 }
 
 [numthreads(BINS_THREAD_COUNT, 1, 1)]
@@ -508,10 +527,12 @@ void CacheParticlesInBins(uint3 id : SV_DispatchThreadID){
 		}
 	}
 	
-
 	uint binLoad = 0;
+	uint clusterLoad;
 	uint binContents[BIN_MAX_AMOUNT_OF_CONTENT] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 	if(isFirstFrame){
+		clusterLoad = binLoad;
+
 		for(uint i = 0; i < particleCount; i++){
 			Particle particle = particles[i];
 			if(particle.binID == bin.id){
@@ -525,7 +546,6 @@ void CacheParticlesInBins(uint3 id : SV_DispatchThreadID){
 		}
 	}
 	else{
-		uint clusterLoad;
 		uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
 		GetNeighboringParticles(bin.posX, bin.posY, true, clusterLoad, clusterContents);
 
@@ -544,8 +564,9 @@ void CacheParticlesInBins(uint3 id : SV_DispatchThreadID){
 		}
 	}
 
-	bin.isDirty = 0;
+	bin.isDirty = isFirstFrame;
 	bin.load = binLoad;
+	bin.clusterLoad = clusterLoad;
 	bin.contents = binContents;
 	bins[id.x] = bin;
 }
@@ -579,11 +600,6 @@ void ComputeDensity(uint3 id : SV_DispatchThreadID) {
 
 	uint clusterLoad = particle.clusterLoad;
 	uint clusterContents[BIN_CLUSTER_CONTENT_MAX] = particle.clusterContents;
-	// GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
-
-	// uint clusterLoad;
-	// uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
-	// GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
 
 	particle.density = particle.GetMass() * POLY6 * pow(HSQ, 2.0);
 	for (uint i = 0; i < clusterLoad; i++){
@@ -618,11 +634,6 @@ void ComputeHeat(uint3 id : SV_DispatchThreadID) {
 
 	uint clusterLoad = particle.clusterLoad;
 	uint clusterContents[BIN_CLUSTER_CONTENT_MAX] = particle.clusterContents;
-	// GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
-
-	// uint clusterLoad;
-	// uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
-	// GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
 
 	particle.debugTemp = 0.0;
 	for (uint i = 0; i < clusterLoad; i++){
@@ -711,14 +722,8 @@ void ApplyHeat(uint3 id : SV_DispatchThreadID) {
 
 	uint clusterLoad = particle.clusterLoad;
 	uint clusterContents[BIN_CLUSTER_CONTENT_MAX] = particle.clusterContents;
-	// GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
-
-	// uint clusterLoad;
-	// uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
-	// GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
 
 	half heat = particle.temperatureStartFrame;
-	
 	for (uint i = 0; i < clusterLoad; i++){
 		uint neighborIndex = clusterContents[i];
 
@@ -752,11 +757,6 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 
 	uint clusterLoad = particle.clusterLoad;
 	uint clusterContents[BIN_CLUSTER_CONTENT_MAX] = particle.clusterContents;
-	// GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
-
-	// uint clusterLoad;
-	// uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
-	// GetNeighboringParticles(particle.binPosX, particle.binPosY, clusterLoad, clusterContents);
 
 	float2 fpress = float2(0.0, 0.0);
 	float2 fvisc = float2(0.0, 0.0);
@@ -774,15 +774,16 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 		float r = sqrt(diff.x * diff.x + diff.y * diff.y) * max(particle.repelFactor, otherParticle.repelFactor);
 
 		uint areParticlesDifferent = signAbs(id.x - neighborIndex);
+		half areParticlesMixable = 1 -signAbs(particle.elementIndex - otherParticle.elementIndex);
 		uint isTouchingNeighbor = step(r, H);
 		uint shouldApplyAnything = areParticlesDifferent * particle.isActive * otherParticle.isActive;
 
 		// compute pressure force contribution
 		fpress += shouldApplyAnything * isTouchingNeighbor * -diffNormal * otherParticle.GetMass() * (particle.pressure + otherParticle.pressure) / (2.0 * otherParticle.density) * SPIKY_GRAD * pow(H - r, 2.0) * CLUSTERING_RESISTANCE;
 		// compute viscosity force contribution
-		fvisc += shouldApplyAnything * isTouchingNeighbor * otherParticle.GetViscosity() * otherParticle.GetMass() * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
+		fvisc += shouldApplyAnything * isTouchingNeighbor * areParticlesMixable * otherParticle.GetViscosity() * otherParticle.GetMass() * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
 		
-		float shouldApplySurfaceTension = shouldApplyAnything * floor((step(r, H_SURFACE_TENSION) + particle.IsLiquid()) * 0.5);
+		float shouldApplySurfaceTension = shouldApplyAnything * areParticlesMixable * floor((step(r, H_SURFACE_TENSION) + particle.IsLiquid()) * 0.5);
 		fsurftens += shouldApplySurfaceTension * diffNormal * VISC_LAP * SURFACE_TENSION_WATER;
 
 		// bounce off frozen particles
@@ -810,11 +811,6 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 	particle.velocity += DT * (particle.force / particle.density);
 	particle.pos += DT * particle.velocity;
 
-	// if(isFirstFrame) particle.velocity += (particle.force / particle.GetMass()) * DT * 0.5;
-	// particle.pos += DT * particle.velocity;
-	// float2 acceleration = particle.force / particle.GetMass();
-	// particle.velocity += DT * acceleration;
-
 	float oldX = particle.pos.x;
 	float oldY = particle.pos.y;
 	particle.pos.x = clamp(particle.pos.x, EPS, GRID_WIDTH_PIXELS - EPS);
@@ -822,14 +818,8 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 
 	particle.velocity.x *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.x - oldX)), 0, 1));
 	particle.velocity.y *= lerp(1.0, BOUND_DAMPING, clamp(ceil(abs(particle.pos.y - oldY)), 0, 1));
-	// velocity = particle.velocity;
 
-	float temp = (particle.temperature / MAX_TEMPERATURE);
-	// output[particle.pos] = float4(temp, 0, 1 - temp, particle.isActive);
-	// output[particle.pos] = float4(0, 1, 0, particle.isActive);
-	// output[particle.pos] = float4(0, 0, 0, 1);
-	// output[particle.pos] = float4(particle.IsSolid(), particle.IsLiquid(), particle.IsGas(), 1);
-
+	// output[particle.pos] = float4(1, 0, 0, 1);
 
 	 // for next frame
 	 uint oldBinID = particle.binID;
@@ -848,58 +838,34 @@ void Integrate(uint3 id : SV_DispatchThreadID) {
 }
 
 [numthreads(BINS_THREAD_COUNT, 1, 1)]
-void MarkPixelsForPostProcess(uint3 id : SV_DispatchThreadID){
+void PreparePostProcess(uint3 id : SV_DispatchThreadID){
 	Bin bin = bins[id.x];
 
-	uint clusterLoad;
-	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
-	GetNeighboringParticles(bin.posX, bin.posY, false, clusterLoad, clusterContents);
-	if(clusterLoad == 0) return;
+	uint hasContent = step(1, bin.load);
+	half4 color = lerp(bin.color, half4(0.0, 0.0, 0.0, 0.0), hasContent);
+	half gaseousness = 0.0;
+	for(uint i = 0; i < bin.load; i++){
+		Particle particle = particles[bin.contents[i]];
 
-	uint posX = bin.posX * BIN_SIZE;
-	uint posY = bin.posY * BIN_SIZE;
+		half4 particleColor = particle.GetColor();
+		color.xyz += particleColor.xyz;
+		color.a = max(color.a, particleColor.a);
+		gaseousness += particle.IsLiquid() * POSTPROCESS_BLURMOD_LIQUID_GASEOUSNESS + particle.IsGas() * POSTPROCESS_BLURMOD_GAS_GASEOUSNESS;
 
-	for(uint i = 0; i < BIN_PIXEL_COUNT; i++){
-		uint pixelLocalY = floor(i / float(BIN_SIZE));
-		uint pixelLocalX = i - pixelLocalY * BIN_SIZE;
-		uint2 pixelPos = uint2(posX + pixelLocalX, posY + pixelLocalY);
-
-		half result = 0.0;
-		for(uint i1 = 0; i1 < clusterLoad; i1++){
-			Particle particle = particles[clusterContents[i1]];
-			half repelFactor = particle.repelFactor;
-			
-			float r2 = repelFactor * REPEL_STRENGTH_MAX;
-			float2 dir = particle.pos - pixelPos;
-			result += (r2 / ((dir.x * dir.x + dir.y * dir.y) * repelFactor * 1.0)) - 0.75;
-		}
-
-		output[pixelPos] = float4(0.0, result, 0.0, 1.0);
-		// output[pixelPos] = float4(clusterLoad / 10.0, result, bin.load / 10.0, 1.0);
 	}
+	color.xyz /= max(1, bin.load);
+	gaseousness /= max(1, bin.load);
+
+	half clusterFillRatio = bin.clusterLoad / half(BIN_CLUSTER_CONTENT_MAX);
+	half blurMod = lerp(1.0, clusterFillRatio * clusterFillRatio * POSTPROCESS_BLURMOD_CLUSTERLOAD_STRENGTH, gaseousness);
+	color.a *= lerp(0.5, blurMod, hasContent);
+
+	bin.color = color;
+	bins[id.x] = bin;
 }
 
-[numthreads(POSTPROCESS_THREAD_COUNT_X, POSTPROCESS_THREAD_COUNT_Y, 1)]
+[numthreads(OUTPUT_THREAD_COUNT_X, OUTPUT_THREAD_COUNT_Y, 1)]
 void PostProcess(uint3 id : SV_DispatchThreadID){
-	// float4 pixel = output[id.xy];
-	// if(pixel.r < 1.0) return;
-
-	// uint clusterLoad;
-	// uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
-	// GetNeighboringParticles(ConvertPosToBinPosX(id.xy), ConvertPosToBinPosY(id.xy), false, clusterLoad, clusterContents);
-	// if (clusterLoad == 0) return;
-
-	// half result = 1.0;// bin.load / half(BIN_MAX_AMOUNT_OF_CONTENT * 0.5);
-	
-	// for(uint i = 0; i < clusterLoad; i++){
-	// 	Particle particle = particles[clusterContents[i]];
-	// 	half repelFactor = particle.repelFactor;
-		
-	// 	float r2 = repelFactor * REPEL_STRENGTH_MAX;
-	// 	float2 dir = particle.pos - id.xy;
-	// 	result += (r2 / ((dir.x * dir.x + dir.y * dir.y)));// * repelFactor));// - 0.5;
-	// }
-
-	// output[id.xy] = float4(0, result, 0, 1);
-	// output[id.xy] = float4(1, 0, 0, 1);
+	Bin bin = bins[GetBinIDFromPos(id.xy)];
+	output[id.xy] += bin.color;
 }
