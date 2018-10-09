@@ -1,9 +1,8 @@
 ﻿#pragma kernel Init
 #pragma kernel InitBins
-#pragma kernel CacheBinStates
 #pragma kernel ClearOutputTexture
 #pragma kernel CacheParticlesInBins
-#pragma kernel CacheParticleNeighbors
+#pragma kernel CacheClustersInBins
 #pragma kernel ComputeDensity
 #pragma kernel ComputePressure
 #pragma kernel ComputeHeat
@@ -166,8 +165,9 @@ struct Bin{ // WARNING: variables must correspond to ElementSimulator.cs's Bin!
 	uint posY;
 	uint isDirty;
 	uint load;
-	uint clusterLoad;
 	uint contents[BIN_MAX_AMOUNT_OF_CONTENT];
+	uint clusterLoad;
+	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
 	half4 color;
 };
 
@@ -202,10 +202,7 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 	// TODO: try to reach multiple of 128 byte
 
 	uint elementIndex; 
-
 	uint binID;
-	uint clusterLoad;
-	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
 
 
 	half GetMass()						{ return MASS[elementIndex]; }
@@ -393,7 +390,6 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 
 
 RWStructuredBuffer<Bin> bins;
-RWStructuredBuffer<Bin> binsAtStartFrame;
 RWStructuredBuffer<Particle> particles;
 uniform uint particleCount;
 // uniform int debugBinIndexX;
@@ -433,7 +429,7 @@ uint GetBinIDFromPos(uint2 pos){
 	return binPosY * BIN_COUNT_X + binPosX;
 }
 
-void GetNeighboringParticles(uint binPosX, uint binPosY, bool willWriteToBins, out uint clusterLoad, out uint clusterContents[BIN_CLUSTER_CONTENT_MAX]){
+void GetNeighboringParticles(uint binPosX, uint binPosY, out uint clusterLoad, out uint clusterContents[BIN_CLUSTER_CONTENT_MAX]){
 	uint binIDs[BIN_CLUSTER_SIZE] = {
 		GetBinIDFromBinPos(binPosX, binPosY),
 		GetBinIDFromBinPos(binPosX - 1, binPosY),
@@ -471,12 +467,7 @@ void GetNeighboringParticles(uint binPosX, uint binPosY, bool willWriteToBins, o
 	clusterLoad = 0;
 	for(uint binIndex = 0; binIndex < BIN_CLUSTER_SIZE; binIndex++){
 		binID = binIDs[binIndex];
-		if(willWriteToBins) {
-			bin = binsAtStartFrame[binID];
-		}
-		else {
-			bin = bins[binID];
-		} 
+		bin = bins[binID];
 
 		binLoad = bin.load * binIDsSafetyMods[binIndex];
 		binContents = bin.contents;
@@ -507,11 +498,6 @@ void InitBins(uint3 id : SV_DispatchThreadID) {
 	bins[id.x] = bin;
 }
 
-[numthreads(BINS_THREAD_COUNT, 1, 1)]
-void CacheBinStates(uint3 id : SV_DispatchThreadID){
-	binsAtStartFrame[id.x] = bins[id.x];
-}
-
 // called continuosly
 [numthreads(OUTPUT_THREAD_COUNT_X, OUTPUT_THREAD_COUNT_Y, 1)]
 void ClearOutputTexture(uint3 id : SV_DispatchThreadID) {
@@ -528,10 +514,9 @@ void CacheParticlesInBins(uint3 id : SV_DispatchThreadID){
 	}
 	
 	uint binLoad = 0;
-	uint clusterLoad;
 	uint binContents[BIN_MAX_AMOUNT_OF_CONTENT] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 	if(isFirstFrame){
-		clusterLoad = binLoad;
+		bin.clusterLoad = binLoad;
 
 		for(uint i = 0; i < particleCount; i++){
 			Particle particle = particles[i];
@@ -546,11 +531,8 @@ void CacheParticlesInBins(uint3 id : SV_DispatchThreadID){
 		}
 	}
 	else{
-		uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
-		GetNeighboringParticles(bin.posX, bin.posY, true, clusterLoad, clusterContents);
-
-		for(uint i = 0; i < clusterLoad; i++){
-			int particleIndex = clusterContents[i];	
+		for(uint i = 0; i < bin.clusterLoad; i++){
+			int particleIndex = bin.clusterContents[i];	
 			Particle particle = particles[particleIndex];
 
 			if(particle.binID == bin.id){
@@ -566,28 +548,15 @@ void CacheParticlesInBins(uint3 id : SV_DispatchThreadID){
 
 	bin.isDirty = isFirstFrame;
 	bin.load = binLoad;
-	bin.clusterLoad = clusterLoad;
 	bin.contents = binContents;
 	bins[id.x] = bin;
 }
 
-[numthreads(THREAD_COUNT_X, 1, 1)]
-void CacheParticleNeighbors(uint3 id : SV_DispatchThreadID){
-	Particle particle = particles[id.x];
-	if(particle.isActive == 0){
-		return;
-	}
-
-	uint2 binPos = uint2(ConvertBinIDToBinPosX(particle.binID), ConvertBinIDToBinPosY(particle.binID));
-
-	uint clusterLoad;
-	uint clusterContents[BIN_CLUSTER_CONTENT_MAX];
-	GetNeighboringParticles(binPos.x, binPos.y, false, clusterLoad, clusterContents);
-
-	particle.clusterLoad = clusterLoad;
-	particle.clusterContents = clusterContents;
-
-	particles[id.x] = particle;
+[numthreads(BINS_THREAD_COUNT, 1, 1)]
+void CacheClustersInBins(uint3 id : SV_DispatchThreadID){
+	Bin bin = bins[id.x];
+	GetNeighboringParticles(bin.posX, bin.posY, bin.clusterLoad, bin.clusterContents);
+	bins[id.x] = bin;
 }
 
 [numthreads(THREAD_COUNT_X, 1, 1)]
@@ -597,13 +566,11 @@ void ComputeDensity(uint3 id : SV_DispatchThreadID) {
 		return;
 	}
 
-
-	uint clusterLoad = particle.clusterLoad;
-	uint clusterContents[BIN_CLUSTER_CONTENT_MAX] = particle.clusterContents;
+	Bin bin = bins[particle.binID];
 
 	particle.density = particle.GetMass() * POLY6 * pow(HSQ, 2.0);
-	for (uint i = 0; i < clusterLoad; i++){
-		uint neighborIndex = clusterContents[i];
+	for (uint i = 0; i < bin.clusterLoad; i++){
+		uint neighborIndex = bin.clusterContents[i];
 
 		Particle otherParticle = particles[neighborIndex];
 		float2 dir = otherParticle.pos - particle.pos;
@@ -632,12 +599,11 @@ void ComputeHeat(uint3 id : SV_DispatchThreadID) {
 		return;
 	}
 
-	uint clusterLoad = particle.clusterLoad;
-	uint clusterContents[BIN_CLUSTER_CONTENT_MAX] = particle.clusterContents;
+	Bin bin = bins[particle.binID];
 
 	particle.debugTemp = 0.0;
-	for (uint i = 0; i < clusterLoad; i++){
-		uint neighborIndex = clusterContents[i];
+	for (uint i = 0; i < bin.clusterLoad; i++){
+		uint neighborIndex = bin.clusterContents[i];
 
 		Particle otherParticle = particles[neighborIndex];
 		float2 dir = otherParticle.pos - particle.pos;
@@ -720,12 +686,11 @@ void ApplyHeat(uint3 id : SV_DispatchThreadID) {
 		return;
 	}
 
-	uint clusterLoad = particle.clusterLoad;
-	uint clusterContents[BIN_CLUSTER_CONTENT_MAX] = particle.clusterContents;
+	Bin bin = bins[particle.binID];
 
 	half heat = particle.temperatureStartFrame;
-	for (uint i = 0; i < clusterLoad; i++){
-		uint neighborIndex = clusterContents[i];
+	for (uint i = 0; i < bin.clusterLoad; i++){
+		uint neighborIndex = bin.clusterContents[i];
 
 		Particle otherParticle = particles[neighborIndex];
 
@@ -755,32 +720,29 @@ void ComputeForces(uint3 id : SV_DispatchThreadID) {
 		return;
 	}
 
-	uint clusterLoad = particle.clusterLoad;
-	uint clusterContents[BIN_CLUSTER_CONTENT_MAX] = particle.clusterContents;
+	Bin bin = bins[particle.binID];
 
 	float2 fpress = float2(0.0, 0.0);
 	float2 fvisc = float2(0.0, 0.0);
 	float2 fsurftens = float2(0.0, 0.0);
 	float2 fgrav = G * particle.density;
 	
-	for (uint i = 0; i < clusterLoad; i++){
-		uint neighborIndex = clusterContents[i];
+	for (uint i = 0; i < bin.clusterLoad; i++){
+		uint neighborIndex = bin.clusterContents[i];
 	
 		Particle otherParticle = particles[neighborIndex];
 
 		float2 diff = PreventValueBeingZero(otherParticle.pos - particle.pos);
 		float2 diffNormal = normalize(diff);
-
 		float r = sqrt(diff.x * diff.x + diff.y * diff.y) * max(particle.repelFactor, otherParticle.repelFactor);
 
 		uint areParticlesDifferent = signAbs(id.x - neighborIndex);
 		half areParticlesMixable = 1 -signAbs(particle.elementIndex - otherParticle.elementIndex);
 		uint isTouchingNeighbor = step(r, H);
 		uint shouldApplyAnything = areParticlesDifferent * particle.isActive * otherParticle.isActive;
+		if(shouldApplyAnything == 0) continue;
 
-		// compute pressure force contribution
 		fpress += shouldApplyAnything * isTouchingNeighbor * -diffNormal * otherParticle.GetMass() * (particle.pressure + otherParticle.pressure) / (2.0 * otherParticle.density) * SPIKY_GRAD * pow(H - r, 2.0) * CLUSTERING_RESISTANCE;
-		// compute viscosity force contribution
 		fvisc += shouldApplyAnything * isTouchingNeighbor * areParticlesMixable * otherParticle.GetViscosity() * otherParticle.GetMass() * (otherParticle.velocity - particle.velocity) / otherParticle.density * VISC_LAP * (H - r);
 		
 		float shouldApplySurfaceTension = shouldApplyAnything * areParticlesMixable * floor((step(r, H_SURFACE_TENSION) + particle.IsLiquid()) * 0.5);
