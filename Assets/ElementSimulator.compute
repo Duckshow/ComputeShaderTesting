@@ -37,7 +37,7 @@ static const float EPS = H; // boundary epsilon
 static const float BOUND_DAMPING = -0.5;
 
 static const float MAX_TEMPERATURE = 1000.0;
-static const float THERMAL_DIFFUSIVITY = 0.2;
+static const float THERMAL_DIFFUSIVITY = 0.25;
 static const float REPEL_STRENGTH_MIN = 4.0;
 static const float REPEL_STRENGTH_MAX = 7.0;
 static const float REPEL_FACTOR_MIN = 1.0 / REPEL_STRENGTH_MAX;
@@ -50,7 +50,7 @@ static const float REPEL_STRENGTH_SMOOTHING_START_SOLID = 0.9;
 
 static const float ALMOST_BUT_NOT_QUITE_ZERO = 0.00001; // used to prevent division by zero
 
-static const half POSTPROCESS_BLURMOD_CLUSTERLOAD_STRENGTH = 100;// 35.0;
+static const half POSTPROCESS_BLURMOD_CLUSTERLOAD_STRENGTH = 25;// 35.0;
 static const half POSTPROCESS_BLURMOD_LIQUID_GASEOUSNESS = 0.25;
 static const half POSTPROCESS_BLURMOD_GAS_GASEOUSNESS = 1.0;
 
@@ -183,23 +183,6 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 	half isActive; 
 	half4 particlesToHeat;
 	half4 heatToGive;
-	half debugTemp;
-	// half debugThermal;
-	half debug1;
-	half debug2;
-	half debug3;
-	half debug4;
-	half debug5;
-	half debug6;
-	half debug7;
-	half debug8;
-	half debug9;
-	half debug10;
-	half debug11;
-	half debug12;
-	half debug13;
-
-	// TODO: try to reach multiple of 128 byte
 
 	uint elementIndex; 
 	uint binID;
@@ -271,136 +254,15 @@ struct Particle{ // WARNING: variables must correspond to ElementSimulator.cs's 
 	}
 };
 
-// struct DebugVars{ // WARNING: variables must correspond to ElementSimulator.cs's DebugVars!
-// 	half hasNewValue;
-// 	half2 debugID;
-// 	half debug_00;
-// 	half debug_01;
-// 	half debug_02;
-// 	half debug_03;
-// 	half debug_04;
-// 	half debug_05;
-// 	half debug_06;
-// 	half debug_07;
-// 	half debug_08;
-// 	half debug_09;
-// 	half debug_10;
-// 	half debug_11;
-// 	half debug_12;
-// 	half debug_13;
-// 	half debug_14;
-// 	half debug_15;
-// 	half debug_16;
-// 	half debug_17;
-// 	half debug_18;
-// 	half debug_19;
-// 	half debug_20;
-// 	half debug_21;
-// 	half debug_22;
-// 	half debug_23;
-// 	half debug_24;
-// 	half debug_25;
-// 	half debug_26;
-// 	half debug_27;
-// 	half debug_28;
-// 	half debug_29;
-// 	half debug_30;
-// 	half debug_31;
-// 	half debug_32;
-// 	half debug_33;
-// 	half debug_34;
-// 	half debug_35;
-// 	half debug_36;
-// 	half debug_37;
-// 	half debug_38;
-// 	half debug_39;
-// 	half debug_40;
-// 	half debug_41;
-// 	half debug_42;
-// 	half debug_43;
-// 	half debug_44;
-// 	half debug_45;
-// 	half debug_46;
-// 	half debug_47;
-// 	half debug_48;
-// 	half debug_49;
-
-// 	void SetID(half id1, half id2){
-// 		debugID.x = id1;
-// 		debugID.y = id2;
-// 	}
-
-// 	void Set(uint index, float val){
-// 		hasNewValue = 1;
-
-// 		if(index == 0) debug_00 = val;
-// 		else if(index == 1) debug_01 = val;
-// 		else if(index == 2) debug_02 = val;
-// 		else if(index == 3) debug_03 = val;
-// 		else if(index == 4) debug_04 = val;
-// 		else if(index == 5) debug_05 = val;
-// 		else if(index == 6) debug_06 = val;
-// 		else if(index == 7) debug_07 = val;
-// 		else if(index == 8) debug_08 = val;
-// 		else if(index == 9) debug_09 = val;
-// 		else if(index == 10) debug_10 = val;
-// 		else if(index == 11) debug_11 = val;
-// 		else if(index == 12) debug_12 = val;
-// 		else if(index == 13) debug_13 = val;
-// 		else if(index == 14) debug_14 = val;
-// 		else if(index == 15) debug_15 = val;
-// 		else if(index == 16) debug_16 = val;
-// 		else if(index == 17) debug_17 = val;
-// 		else if(index == 18) debug_18 = val;
-// 		else if(index == 19) debug_19 = val;
-// 		else if(index == 20) debug_20 = val;
-// 		else if(index == 21) debug_21 = val;
-// 		else if(index == 22) debug_22 = val;
-// 		else if(index == 23) debug_23 = val;
-// 		else if(index == 24) debug_24 = val;
-// 		else if(index == 25) debug_25 = val;
-// 		else if(index == 26) debug_26 = val;
-// 		else if(index == 27) debug_27 = val;
-// 		else if(index == 28) debug_28 = val;
-// 		else if(index == 29) debug_29 = val;
-// 		else if(index == 30) debug_30 = val;
-// 		else if(index == 31) debug_31 = val;
-// 		else if(index == 31) debug_31 = val;
-// 		else if(index == 32) debug_32 = val;
-// 		else if(index == 33) debug_33 = val;
-// 		else if(index == 34) debug_34 = val;
-// 		else if(index == 35) debug_35 = val;
-// 		else if(index == 36) debug_36 = val;
-// 		else if(index == 37) debug_37 = val;
-// 		else if(index == 38) debug_38 = val;
-// 		else if(index == 39) debug_39 = val;
-// 		else if(index == 40) debug_40 = val;
-// 		else if(index == 41) debug_41 = val;
-// 		else if(index == 41) debug_41 = val;
-// 		else if(index == 42) debug_42 = val;
-// 		else if(index == 43) debug_43 = val;
-// 		else if(index == 44) debug_44 = val;
-// 		else if(index == 45) debug_45 = val;
-// 		else if(index == 46) debug_46 = val;
-// 		else if(index == 47) debug_47 = val;
-// 		else if(index == 48) debug_48 = val;
-// 		else if(index == 49) debug_49 = val;
-// 	}
-// };
-
 
 RWStructuredBuffer<Bin> bins;
 RWStructuredBuffer<Particle> particles;
 uniform uint particleCount;
-// uniform int debugBinIndexX;
-// uniform int debugBinIndexY;
-// RWStructuredBuffer<DebugVars> debugVars;
 
 RWTexture2D<float4> output;
 uniform bool isFirstFrame;
 uniform bool isEvenFrame;
 half abort;
-uniform uint debugIndex;
 
 
 uint ConvertPosToBinPosX(float x) {
@@ -601,7 +463,6 @@ void ComputeHeat(uint3 id : SV_DispatchThreadID) {
 
 	Bin bin = bins[particle.binID];
 
-	particle.debugTemp = 0.0;
 	for (uint i = 0; i < bin.clusterLoad; i++){
 		uint neighborIndex = bin.clusterContents[i];
 
@@ -616,9 +477,6 @@ void ComputeHeat(uint3 id : SV_DispatchThreadID) {
 		half temperatureStartFrameOther = otherParticle.temperatureStartFrame;
 		
 		half isWithinRange = step(r2, HSQ_TEMPERATURE);
-		if(isWithinRange && neighborIndex == debugIndex && otherParticle.binID == particle.binID){
-			particle.debugTemp = 1.0;
-		}
 
 		half isWarmerThanNeighbor = step(temperatureStartFrameOther, temperatureStartFrame);
 		half isNeighborBelowMaxHeat = step(otherParticle.temperatureStartFrame, MAX_TEMPERATURE);

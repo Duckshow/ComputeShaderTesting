@@ -1,0 +1,29 @@
+﻿#pragma kernel Main
+
+// //#region[rgba(50, 0, 0, 1)] WARNING: Must correspond to variables in ExampleShader.cs!
+// struct Ball{
+// 	float2 pos;
+// };
+
+static const int THREADS_MAIN = 1024;
+// static const int BALL_COUNT = 10240;
+// //#endregion
+
+// RWStructuredBuffer<Ball> balls;
+// half time;
+
+
+[numthreads(THREADS_MAIN, 1, 1)]
+void Main (uint3 id : SV_DispatchThreadID){
+	// Ball ball = balls[id.x];
+
+	// float newX = id.x % 100;
+	// float newY = sin(time + (id.x / float(BALL_COUNT)) * 50.0);
+	// newY += floor(id.x / 100);
+
+	// newX *= 0.1;
+	// newY *= 0.1;
+
+	// ball.pos = float2(newX, newY);
+	// balls[id.x] = ball;
+}
