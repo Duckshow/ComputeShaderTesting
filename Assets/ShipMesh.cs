@@ -98,8 +98,13 @@ public class ShipMesh : MonoBehaviour {
 				uvTexture[vIndexCenter] = uvTextureMax * 0.5f;
 				uvPerlin[vIndexCenter] = uvPerlinCenter;
 
-				if (Random.value < 0.1f){
-					Color32 newColor = new Color32(255, 0, 0, 255);
+				float random = Random.value;
+				if (random < 0.1f){
+					byte r = (byte)(random > 0.066f ? 255 : 0);
+					byte g = (byte)(random < 0.066f && random > 0.033f ? 255 : 0);
+					byte b = (byte)(random < 0.033f ? 255 : 0);
+					Color32 newColor = new Color32(r, g, b, 255);
+
 					vertexColors[vIndexBottomLeft] = newColor;
 					vertexColors[vIndexTopLeft] = newColor;
 					vertexColors[vIndexTopRight] = newColor;
@@ -109,10 +114,12 @@ public class ShipMesh : MonoBehaviour {
 					if(x > 0){
 						vertexColors[vIndexBottomRight - VERTICES_PER_TILE] = newColor;
 						vertexColors[vIndexTopRight - VERTICES_PER_TILE] = newColor;
+						vertexColors[vIndexCenter - VERTICES_PER_TILE] = newColor;
 					} 
 					if (x < sizeShip.x - 1){
 						vertexColors[vIndexBottomLeft + VERTICES_PER_TILE] = newColor;
 						vertexColors[vIndexTopLeft + VERTICES_PER_TILE] = newColor;
+						vertexColors[vIndexCenter + VERTICES_PER_TILE] = newColor;
 					}
 				}
 
