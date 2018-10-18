@@ -15,7 +15,7 @@ public class ShipMesh : MonoBehaviour {
 
 	private const string PROPERTY_SCALESHIPX = "_ScaleShipX";
 	private const string PROPERTY_SCALESHIPY = "_ScaleShipY";
-	private const string PROPERTY_SCALEPERLIN = "_ScalePerlin";
+	private const string PROPERTY_SCALEELEMENTS = "_ScaleElements";
 	private const string PROPERTY_SCALETIME = "_ScaleTime";
 	
 	[SerializeField] private Material material;
@@ -25,7 +25,7 @@ public class ShipMesh : MonoBehaviour {
 	[Space]
 	[SerializeField] private Vector2Int sizeShip;
 	[SerializeField] private Vector2Int sizeTile;
-	[SerializeField] private float scalePerlin = 0.125f;
+	[SerializeField] private float scaleElements = 0.125f;
 	[SerializeField] private float scaleTime = 2.0f;
 
 	private Color32[] vertexColors = new Color32[VERTICES_PER_TILE];
@@ -36,7 +36,7 @@ public class ShipMesh : MonoBehaviour {
 
 	private int propertyID_ScaleShipX;
 	private int propertyID_ScaleShipY;
-	private int propertyID_ScalePerlin;
+	private int propertyID_ScaleElements;
 	private int propertyID_ScaleTime;
 
 
@@ -100,9 +100,9 @@ public class ShipMesh : MonoBehaviour {
 
 				float random = Random.value;
 				if (random < 0.1f){
-					byte r = (byte)(random > 0.066f ? 255 : 0);
-					byte g = (byte)(random < 0.066f && random > 0.033f ? 255 : 0);
-					byte b = (byte)(random < 0.033f ? 255 : 0);
+					byte r = (byte)(Random.value < 0.5 ? 255 : 0);
+					byte g = (byte)(Random.value < 0.5 ? 255 : 0);
+					byte b = (byte)(Random.value < 0.5 ? 255 : 0);
 					Color32 newColor = new Color32(r, g, b, 255);
 
 					vertexColors[vIndexBottomLeft] = newColor;
@@ -162,12 +162,12 @@ public class ShipMesh : MonoBehaviour {
 
 		propertyID_ScaleShipX = Shader.PropertyToID(PROPERTY_SCALESHIPX);
 		propertyID_ScaleShipY = Shader.PropertyToID(PROPERTY_SCALESHIPY);
-		propertyID_ScalePerlin = Shader.PropertyToID(PROPERTY_SCALEPERLIN);
+		propertyID_ScaleElements = Shader.PropertyToID(PROPERTY_SCALEELEMENTS);
 		propertyID_ScaleTime = Shader.PropertyToID(PROPERTY_SCALETIME);
 
 		material.SetFloat(propertyID_ScaleShipX, sizeShip.x);
 		material.SetFloat(propertyID_ScaleShipY, sizeShip.y);
-		material.SetFloat(propertyID_ScalePerlin, scalePerlin);
+		material.SetFloat(propertyID_ScaleElements, scaleElements);
 		material.SetFloat(propertyID_ScaleTime, scaleTime);
 	}
 }
