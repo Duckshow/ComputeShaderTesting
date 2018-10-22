@@ -1,5 +1,6 @@
 ﻿Shader "Unlit/ShipLiquids"{
 	Properties{
+		_MainTex ("Main Texture", 2D) = "white" {}
 		_ElementsLiquidGasTex_0 ("ElementsLiquidGasTex_0", 2D) = "white" {}
 		_ElementsLiquidGasTex_1 ("ElementsLiquidGasTex_1", 2D) = "white" {}
 		_ElementsLiquidGasTex_2 ("ElementsLiquidGasTex_2", 2D) = "white" {}
@@ -33,6 +34,7 @@
 				fixed4 color : COLOR0;
 			};
 
+			sampler2D _MainTex;
 			sampler2D _ElementsLiquidGasTex_0;
 			sampler2D _ElementsLiquidGasTex_1;
 			sampler2D _ElementsLiquidGasTex_2;
@@ -58,7 +60,10 @@
 				i.uvElements.y = i.uvElements.y * _ScaleShipY;
 				i.uvElements.x *= _ScaleElements;
 				i.uvElements.y *= _ScaleElements;
+
+				fixed4 pixelMainTex = tex2D(_MainTex, i.uvTexture);
 				
+				// TODO: try putting these in vert! Could look cool :P (and save a lot of juice!)
 				fixed pixelLiquidGas_0 = tex2D(_ElementsLiquidGasTex_0, i.uvElements * 0.5);
 				fixed pixelLiquidGas_1 = tex2D(_ElementsLiquidGasTex_1, i.uvElements * 0.5);
 				fixed pixelLiquidGas_2 = tex2D(_ElementsLiquidGasTex_2, i.uvElements * 0.5);
@@ -80,11 +85,14 @@
 				fixed4 liquidColor = fixed4(0.35, 0.75, 1.0, 0.75);
 				fixed4 gasColor = fixed4(0.85, 0.95, 1.0, 0.5);
 
-				fixed4 outputColor = fixed4(0.0, 0.0, 0.0, 1.0);
-				outputColor = solid * solidColor + liquid * liquidColor + gas * gasColor;
-				outputColor.a = 1;
+				fixed4 pixelElements = fixed4(0.0, 0.0, 0.0, 1.0);
+				pixelElements.xyz = solid * solidColor + liquid * liquidColor + gas * gasColor;
 
-				return outputColor;
+				pixelMainTex.r = lerp(pixelMainTex.r, pixelElements.r, pixelElements.a);
+				pixelMainTex.g = lerp(pixelMainTex.g, pixelElements.g, pixelElements.a);
+				pixelMainTex.b = lerp(pixelMainTex.b, pixelElements.b, pixelElements.a);
+				pixelMainTex.a = pixelElements.a;
+				return pixelMainTex;
 			}
 			ENDCG
 		}
