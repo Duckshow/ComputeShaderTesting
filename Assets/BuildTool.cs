@@ -20,7 +20,8 @@ public class BuildTool : Singleton<BuildTool> {
 		}
 		else if (Mouse.GetInstance().GetStateLMB() == Mouse.StateEnum.Hold){
 			posGridEnd = instanceMouse.GetPosGrid();
-		
+		}
+		else if (Mouse.GetInstance().GetStateLMB() == Mouse.StateEnum.Release){
 			
 		}
 	}

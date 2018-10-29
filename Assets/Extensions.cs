@@ -1,4 +1,6 @@
 ﻿using UnityEngine;
+using UnityEditor;
+
 public static class Extensions {
 	public static float GetAxis(this Vector3 v, int axisIndex){
 		if(axisIndex == 0) return v.x;
@@ -35,6 +37,25 @@ public static class Extensions {
 	}
 }
 
+[CustomPropertyDrawer(typeof(Float2))]
+public class Float2Drawer : PropertyDrawer {
+	public override void OnGUI(Rect position, SerializedProperty property, GUIContent label) {
+
+		position = EditorGUI.PrefixLabel(position, GUIUtility.GetControlID(FocusType.Passive), label);
+		EditorGUI.BeginProperty(position, label, property);
+
+		float width = position.width * 0.5f;
+		Rect rectX = new Rect(position.x, position.y, width, position.height);
+		Rect rectY = new Rect(width + position.x, position.y, width, position.height);
+		SerializedProperty propX = property.FindPropertyRelative("x");
+		SerializedProperty propY = property.FindPropertyRelative("y");
+		propX.floatValue = EditorGUI.FloatField(rectX, "", propX.floatValue);
+		propY.floatValue = EditorGUI.FloatField(rectY, "", propY.floatValue);
+
+		EditorGUI.EndProperty();
+	}
+}
+
 [System.Serializable] public struct Int2 {
 	public int x;
 	public int y;
@@ -58,5 +79,24 @@ public static class Extensions {
 
 	public static Int2 operator *(Int2 value0, int m) {
 		return new Int2(value0.x * m, value0.y * m);
+	}
+}
+
+[CustomPropertyDrawer(typeof(Int2))]
+public class Int2Drawer : PropertyDrawer {
+	public override void OnGUI(Rect position, SerializedProperty property, GUIContent label) {
+
+		position = EditorGUI.PrefixLabel(position, GUIUtility.GetControlID(FocusType.Passive), label);
+		EditorGUI.BeginProperty(position, label, property);
+
+		float width = position.width * 0.5f;
+		Rect rectX = new Rect(position.x, position.y, width, position.height);
+		Rect rectY = new Rect(width + position.x, position.y, width, position.height);
+		SerializedProperty propX = property.FindPropertyRelative("x");
+		SerializedProperty propY = property.FindPropertyRelative("y");
+		propX.intValue = EditorGUI.IntField(rectX, "", propX.intValue);
+		propY.intValue = EditorGUI.IntField(rectY, "", propY.intValue);
+
+		EditorGUI.EndProperty();
 	}
 }

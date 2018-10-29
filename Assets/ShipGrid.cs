@@ -1,12 +1,24 @@
 ﻿using UnityEngine;
 
 public class ShipGrid : Singleton<ShipGrid> {
+	public class Tile {
+		public enum Type { None, Corridor }
+		private Type type = Type.None;
+
+		public void SetType(Type type) {
+			this.type = type;
+		}
+	}
+
+	public TileAssetBlock test;
+	private Tile[,] grid;
+
 	private Int2 size;
 	private Int2 sizeHalf;
-
 	public Int2 GetSize() {
 		return size;
 	}
+
 
 	public static Vector2Int ConvertWorldToGrid(Vector2 posWorld) {
 		Int2 size = GetInstance().size;
@@ -22,5 +34,10 @@ public class ShipGrid : Singleton<ShipGrid> {
 
 		size = ShipMesh.GetInstance().GetWorldSize();
 		sizeHalf = new Int2(size.x * 0.5f, size.y * 0.5f);
+		grid = new Tile[size.x, size.y];
+	}
+
+	public void SetTileType(Int2 posGrid, Tile.Type type) {
+		grid[posGrid.x, posGrid.y].SetType(type);
 	}
 }

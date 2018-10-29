@@ -174,4 +174,8 @@ public class ShipMesh : Singleton<ShipMesh> {
 		material.SetFloat(propertyID_ScaleElements, scaleElements);
 		material.SetFloat(propertyID_ScaleTime, scaleTime);
 	}
+
+	public void SetTileAsset(Int2 posGrid) { 
+
+	}
 }
