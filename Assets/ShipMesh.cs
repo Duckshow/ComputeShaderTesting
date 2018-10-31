@@ -39,8 +39,10 @@ public class ShipMesh : Singleton<ShipMesh> {
 	private int propertyID_ScaleElements;
 	private int propertyID_ScaleTime;
 
+	private Vector2[] uvs;
 
-	public Int2 GetWorldSize() {
+
+	public Int2 GetSizeWorld() {
 		return size * SIZE_TILE;
 	}
 
@@ -53,7 +55,7 @@ public class ShipMesh : Singleton<ShipMesh> {
 		int vertexCount = size.x * size.y * VERTICES_PER_TILE;
 
 		Vector3[] vertices = new Vector3[vertexCount];
-		Vector2[] uvTexture = new Vector2[vertexCount];
+		uvs = new Vector2[vertexCount];
 		Vector2[] uvPerlin = new Vector2[vertexCount];
 		int[] tris = new int[size.x * size.y * TRIS_PER_TILE * 3];
 		
@@ -83,23 +85,23 @@ public class ShipMesh : Singleton<ShipMesh> {
 				Vector2 uvPerlinCenter = new Vector2((x + 0.5f) / sizeShipX, (y + 0.5f) / sizeShipY);
 
 				vertices[vIndexBottomLeft] = offset + new Vector3(x, y, 0.0f);
-				uvTexture[vIndexBottomLeft] = uvTextureMin;
+				uvs[vIndexBottomLeft] = uvTextureMin;
 				uvPerlin[vIndexBottomLeft] = uvPerlinMin;
 
 				vertices[vIndexTopLeft] = offset + new Vector3(x, y + SIZE_TILE, 0.0f);
-				uvTexture[vIndexTopLeft] = new Vector2(uvTextureMin.x, uvTextureMax.y);
+				uvs[vIndexTopLeft] = new Vector2(uvTextureMin.x, uvTextureMax.y);
 				uvPerlin[vIndexTopLeft] = new Vector2(uvPerlinMin.x, uvPerlinMax.y);
 
 				vertices[vIndexTopRight] = offset + new Vector3(x + SIZE_TILE, y + SIZE_TILE, 0.0f);
-				uvTexture[vIndexTopRight] = uvTextureMax;
+				uvs[vIndexTopRight] = uvTextureMax;
 				uvPerlin[vIndexTopRight] = uvPerlinMax;
 
 				vertices[vIndexBottomRight] = offset + new Vector3(x + SIZE_TILE, y, 0.0f);
-				uvTexture[vIndexBottomRight] = new Vector2(uvTextureMax.x, uvTextureMin.y);
+				uvs[vIndexBottomRight] = new Vector2(uvTextureMax.x, uvTextureMin.y);
 				uvPerlin[vIndexBottomRight] = new Vector2(uvPerlinMax.x, uvPerlinMin.y);
 
 				vertices[vIndexCenter] = offset + new Vector3(x + SIZE_TILE * 0.5f, y + SIZE_TILE * 0.5f, 0.0f);
-				uvTexture[vIndexCenter] = uvTextureMax * 0.5f;
+				uvs[vIndexCenter] = uvTextureMax * 0.5f;
 				uvPerlin[vIndexCenter] = uvPerlinCenter;
 
 				float random = Random.value;
@@ -150,7 +152,7 @@ public class ShipMesh : Singleton<ShipMesh> {
 		}
 
 		mesh.vertices = vertices;
-		mesh.uv = uvTexture;
+		mesh.uv = uvs;
 		mesh.uv2 = uvPerlin;
 		mesh.triangles = tris;
 		mesh.colors32 = vertexColors;
@@ -175,7 +177,12 @@ public class ShipMesh : Singleton<ShipMesh> {
 		material.SetFloat(propertyID_ScaleTime, scaleTime);
 	}
 
-	public void SetTileAsset(Int2 posGrid) { 
+	public void UpdateTileAsset(Int2 posGrid) {
+		ShipGrid.Tile.Type type = ShipGrid.GetInstance().GetTileType(posGrid);
+		TileAssetBlock tileAssetBlock = AssetManager.GetInstance().GetTileAssetBlockFromTileType(type);
 
+		int vertexIndex = posGrid.y * (size.x * VERTICES_PER_TILE) + posGrid.x;
+
+		// uvs[vertexIndex + VERTEX_INDEX_BOTTOM_LEFT] = tileAssetBlock.
 	}
 }
