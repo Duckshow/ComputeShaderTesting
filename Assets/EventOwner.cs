@@ -2,8 +2,6 @@
 
 public abstract class EventOwner : MonoBehaviour {
 
-	[System.NonSerialized] public int[] EventIndices;
-
 	protected virtual void OnEnable() {
 		EventManager.GetInstance().AddEventOwner(this);
 	}

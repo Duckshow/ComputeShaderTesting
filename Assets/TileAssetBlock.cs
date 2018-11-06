@@ -1,45 +1,58 @@
 ﻿using System;
 using UnityEngine;
 [Serializable] public class TileAssetBlock {
+	[Serializable] public struct ColumnDataInt2 { // can't use 2D array if we want custom prop drawer to work...
+		public Int2[] Data;
+	}
 
 	public const int MAX_WIDTH = 3;
 	public const int MAX_HEIGHT = 5;
+	public const int INDEX_CENTER_Y = 2;
 
-	public static readonly string[] VARIABLE_NAMES = new string[]{
-		"X0Y0",
-		"X1Y0",
-		"X2Y0",
-		"X0Y1",
-		"X1Y1",
-		"X2Y1",
-		"X0Y2",
-		"X1Y2",
-		"X2Y2",
-		"X0Y3",
-		"X1Y3",
-		"X2Y3",
-		"X0Y4",
-		"X1Y4",
-		"X2Y4"
-	};
+	public ColumnDataInt2[] Block = new ColumnDataInt2[MAX_WIDTH];
+	public Int2[] Line = new Int2[MAX_WIDTH];
 
-	public Int2 X0Y0;
-	public Int2 X1Y0;
-	public Int2 X2Y0;
-	public Int2 X0Y1;
-	public Int2 X1Y1;
-	public Int2 X2Y1;
-	public Int2 X0Y2;
-	public Int2 X1Y2;
-	public Int2 X2Y2;
-	public Int2 X0Y3;
-	public Int2 X1Y3;
-	public Int2 X2Y3;
-	public Int2 X0Y4;
-	public Int2 X1Y4;
-	public Int2 X2Y4;
+	private bool hasSetHasValueInBlock = false;
+	private bool hasValueInBlock = false;
 
-	public Int2 GetPosTexture(Int2 posTileAssetBlock) { 
-		
+
+	public Int2 GetPosTexture(Int2 posTileAssetBlock) {
+		if (posTileAssetBlock.y == INDEX_CENTER_Y && HasValueAtPos(posTileAssetBlock.x)) {
+			return Line[posTileAssetBlock.x];
+		}
+
+		return Block[posTileAssetBlock.x].Data[posTileAssetBlock.y];
+	}
+
+	public bool HasValueAtPos(int x, int y) {
+		Int2 texPos = Block[x].Data[y];
+		return texPos.x >= 0 && texPos.y >= 0;
+	}
+
+	public bool HasValueAtPos(int x) {
+		Int2 texPos = Line[x];
+		return texPos.x >= 0 && texPos.y >= 0;
+	}
+
+	public bool HasValueInBlock(){
+		if (hasSetHasValueInBlock) { 
+			return hasValueInBlock;
+		}
+
+		hasSetHasValueInBlock = true;
+
+		for (int x = 0; x < Block.Length; x++){
+			ColumnDataInt2 block = Block[x];
+			for (int y = 0; y < block.Data.Length; y++){
+				Int2 data = block.Data[y];
+				if (data.x >= 0 || data.y >= 0) {
+					hasValueInBlock = true;
+					return true;
+				}
+			}
+		}
+
+		hasValueInBlock = false;
+		return false;
 	}
 }

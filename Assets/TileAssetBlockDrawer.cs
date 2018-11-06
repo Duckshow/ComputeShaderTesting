@@ -8,42 +8,58 @@ using System.Reflection;
 [CustomPropertyDrawer(typeof(TileAssetBlock))]
 public class TileAssetBlockDrawer : PropertyDrawer {
 
-	private static readonly Float2 PADDING = new Float2(20.0f, 10.0f);
+	private static readonly Float2 PADDING = new Float2(20.0f, 20.0f);
 
 
 	public override void OnGUI(Rect position, SerializedProperty property, GUIContent label) {
 		position = EditorGUI.PrefixLabel(position, GUIUtility.GetControlID(FocusType.Passive), label);
 		EditorGUI.BeginProperty(position, label, property);
 
-		Rect foldoutRect = position;
-		foldoutRect.height = EditorGUIUtility.singleLineHeight;
+		Rect foldoutRect = new Rect(position.x, position.y, position.width, EditorGUIUtility.singleLineHeight);
 		property.isExpanded = EditorGUI.Foldout(foldoutRect, property.isExpanded, property.isExpanded ? "Hide" : "Show");
-		
+
 		if (property.isExpanded){
 			EditorGUI.indentLevel = 0;
 			EditorGUIUtility.labelWidth = 0.1f;
-			for (int y = 0; y < TileAssetBlock.MAX_HEIGHT; y++){
-				for (int x = 0; x < TileAssetBlock.MAX_WIDTH; x++){
-					DrawField(TileAssetBlock.VARIABLE_NAMES[y * TileAssetBlock.MAX_WIDTH + x], x, y, property, position);
+
+			SerializedProperty propBlock = property.FindPropertyRelative("Block");
+			if (propBlock.arraySize != TileAssetBlock.MAX_WIDTH) {
+				propBlock.arraySize = TileAssetBlock.MAX_WIDTH;
+			}
+
+			SerializedProperty propLine = property.FindPropertyRelative("Line");
+			if (propLine.arraySize != TileAssetBlock.MAX_WIDTH){
+				propLine.arraySize = TileAssetBlock.MAX_WIDTH;
+			}
+
+			for (int x = 0; x < TileAssetBlock.MAX_WIDTH; x++){
+				SerializedProperty propBlockData = propBlock.GetArrayElementAtIndex(x).FindPropertyRelative("Data");
+				if (propBlockData.arraySize != TileAssetBlock.MAX_HEIGHT){
+					propBlockData.arraySize = TileAssetBlock.MAX_HEIGHT;
 				}
+
+				for (int y = 0; y < TileAssetBlock.MAX_HEIGHT; y++){
+					SerializedProperty propElement = propBlockData.GetArrayElementAtIndex(y);
+					DrawField(propBlockData.GetArrayElementAtIndex(y), x, y, property, position);
+				}
+
+				DrawField(propLine.GetArrayElementAtIndex(x), x, TileAssetBlock.MAX_HEIGHT + (int)EditorGUIUtility.singleLineHeight, property, position);
 			}
 		}
 
 		EditorGUI.EndProperty();
 	}
 
-	void DrawField(string fieldName, int x, int y, SerializedProperty ownerProperty, Rect ownerPosition) {
-		SerializedProperty prop = ownerProperty.FindPropertyRelative(fieldName);
-
+	void DrawField(SerializedProperty field, int x, int y, SerializedProperty ownerProperty, Rect ownerPosition) {
 		float width = GetChildPropertyWidth(ownerPosition.width);
-		float height = GetChildPropertyHeight(prop);
+		float height = GetChildPropertyHeight(field);
 
 		Vector2 pos = ownerPosition.position;
 		pos.x += x * width + x * PADDING.x;
 		pos.y += (y + 1) * height + (y + 1) * PADDING.y;
 
 		Rect rect = new Rect(pos.x, pos.y, width, height);
-		EditorGUI.PropertyField(rect, prop, includeChildren: true);
+		EditorGUI.PropertyField(rect, field);
 	}
 
 	float GetChildPropertyWidth(float ownerWidth) { 
@@ -56,7 +72,7 @@ public class TileAssetBlockDrawer : PropertyDrawer {
 
 	public override float GetPropertyHeight(SerializedProperty property, GUIContent label) {
 		if(property.isExpanded) {
-			return PADDING.y * 2 + (EditorGUI.GetPropertyHeight(property, label, includeChildren: false) + PADDING.y) * TileAssetBlock.MAX_HEIGHT;
+			return PADDING.y * 3 + (EditorGUI.GetPropertyHeight(property, label, includeChildren: false) + PADDING.y) * TileAssetBlock.MAX_HEIGHT;
 		}
 		else{
 			return EditorGUI.GetPropertyHeight(property, label, includeChildren: false);

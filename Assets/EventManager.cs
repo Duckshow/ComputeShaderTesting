@@ -9,8 +9,6 @@ public class EventManager : MonoBehaviour {
 		return instance;
 	}
 
-	public const int EVENT_COUNT = 9;
-
 	private List<EventOwner> eventOwnersAwakeEarly = new List<EventOwner>();
 	private List<EventOwner> eventOwnersAwakeDefault = new List<EventOwner>();
 	private List<EventOwner> eventOwnersAwakeLate = new List<EventOwner>();
@@ -23,18 +21,6 @@ public class EventManager : MonoBehaviour {
 
 
 	public void AddEventOwner(EventOwner eventOwner) {
-		eventOwner.EventIndices = new int[EVENT_COUNT] {
-			eventOwnersAwakeEarly.Count,
-			eventOwnersAwakeDefault.Count,
-			eventOwnersAwakeLate.Count,
-			eventOwnersStartEarly.Count,
-			eventOwnersStartDefault.Count,
-			eventOwnersStartLate.Count,
-			eventOwnersUpdateEarly.Count,
-			eventOwnersUpdateDefault.Count,
-			eventOwnersUpdateLate.Count
-		};
-
 		if (eventOwner.IsUsingAwakeEarly()) 	eventOwnersAwakeEarly.		Add(eventOwner);
 		if (eventOwner.IsUsingAwakeDefault()) 	eventOwnersAwakeDefault.	Add(eventOwner);
 		if (eventOwner.IsUsingAwakeLate()) 		eventOwnersAwakeLate.		Add(eventOwner);
@@ -47,17 +33,15 @@ public class EventManager : MonoBehaviour {
 	}
 
 	public void RemoveEventOwner(EventOwner eventOwner){
-		if (eventOwner.IsUsingAwakeEarly()) 	eventOwnersAwakeEarly.		RemoveAt(eventOwner.EventIndices[0]);
-		if (eventOwner.IsUsingAwakeDefault()) 	eventOwnersAwakeDefault.	RemoveAt(eventOwner.EventIndices[1]);
-		if (eventOwner.IsUsingAwakeLate()) 		eventOwnersAwakeLate.		RemoveAt(eventOwner.EventIndices[2]);
-		if (eventOwner.IsUsingStartEarly()) 	eventOwnersStartEarly.		RemoveAt(eventOwner.EventIndices[3]);
-		if (eventOwner.IsUsingStartDefault()) 	eventOwnersStartDefault.	RemoveAt(eventOwner.EventIndices[4]);
-		if (eventOwner.IsUsingStartLate()) 		eventOwnersStartLate.		RemoveAt(eventOwner.EventIndices[5]);
-		if (eventOwner.IsUsingUpdateEarly()) 	eventOwnersUpdateEarly.		RemoveAt(eventOwner.EventIndices[6]);
-		if (eventOwner.IsUsingUpdateDefault()) 	eventOwnersUpdateDefault.	RemoveAt(eventOwner.EventIndices[7]);
-		if (eventOwner.IsUsingUpdateLate()) 	eventOwnersUpdateLate.		RemoveAt(eventOwner.EventIndices[8]);
-
-		eventOwner.EventIndices = new int[EVENT_COUNT];
+		if (eventOwner.IsUsingAwakeEarly()) 	eventOwnersAwakeEarly.		Remove(eventOwner);
+		if (eventOwner.IsUsingAwakeDefault()) 	eventOwnersAwakeDefault.	Remove(eventOwner);
+		if (eventOwner.IsUsingAwakeLate()) 		eventOwnersAwakeLate.		Remove(eventOwner);
+		if (eventOwner.IsUsingStartEarly()) 	eventOwnersStartEarly.		Remove(eventOwner);
+		if (eventOwner.IsUsingStartDefault()) 	eventOwnersStartDefault.	Remove(eventOwner);
+		if (eventOwner.IsUsingStartLate()) 		eventOwnersStartLate.		Remove(eventOwner);
+		if (eventOwner.IsUsingUpdateEarly()) 	eventOwnersUpdateEarly.		Remove(eventOwner);
+		if (eventOwner.IsUsingUpdateDefault()) 	eventOwnersUpdateDefault.	Remove(eventOwner);
+		if (eventOwner.IsUsingUpdateLate()) 	eventOwnersUpdateLate.		Remove(eventOwner);
 	}
 
 

@@ -33,17 +33,38 @@ public class ShipMesh : Singleton<ShipMesh> {
 	private MeshRenderer meshRenderer;
 	private MeshFilter meshFilter;
 	private Mesh mesh;
+	private Vector2[] uvs;
+
+	private bool isDirty = false;
 
 	private int propertyID_ScaleShipX;
 	private int propertyID_ScaleShipY;
 	private int propertyID_ScaleElements;
 	private int propertyID_ScaleTime;
 
-	private Vector2[] uvs;
-
-
 	public Int2 GetSizeWorld() {
 		return size * SIZE_TILE;
+	}
+
+	public override bool IsUsingAwakeEarly() { return true; }
+	public override void AwakeEarly(){
+		meshFilter = GetComponentInChildren<MeshFilter>();
+		mesh = meshFilter.mesh;
+		uvs = mesh.uv;
+	}
+
+	public override bool IsUsingUpdateLate() { return true; }
+	public override void UpdateLate() { 
+		if (isDirty){
+			isDirty = false;
+
+			UpdateMesh();
+		}
+	}
+
+	void UpdateMesh(){
+		mesh.uv = uvs;
+		meshFilter.mesh = mesh;
 	}
 
 	[EasyButtons.Button]
@@ -81,8 +102,8 @@ public class ShipMesh : Singleton<ShipMesh> {
 				Vector2 uvTextureMin = Vector2.zero;
 				Vector2 uvTextureMax = Vector2.one;
 				Vector2 uvPerlinMin = new Vector2(x / sizeShipX, y / sizeShipY);
-				Vector2 uvPerlinMax = new Vector2((x + 1) / sizeShipX, (y + 1) / sizeShipY);
-				Vector2 uvPerlinCenter = new Vector2((x + 0.5f) / sizeShipX, (y + 0.5f) / sizeShipY);
+				Vector2 uvPerlinMax = new Vector2((x + SIZE_TILE) / sizeShipX, (y + SIZE_TILE) / sizeShipY);
+				Vector2 uvPerlinCenter = new Vector2((x + SIZE_TILE * 0.5f) / sizeShipX, (y + SIZE_TILE * 0.5f) / sizeShipY);
 
 				vertices[vIndexBottomLeft] = offset + new Vector3(x, y, 0.0f);
 				uvs[vIndexBottomLeft] = uvTextureMin;
@@ -178,11 +199,30 @@ public class ShipMesh : Singleton<ShipMesh> {
 	}
 
 	public void UpdateTileAsset(Int2 posGrid) {
-		ShipGrid.Tile.Type type = ShipGrid.GetInstance().GetTileType(posGrid);
-		TileAssetBlock tileAssetBlock = AssetManager.GetInstance().GetTileAssetBlockFromTileType(type);
+		ShipGrid.Tile tile = ShipGrid.GetInstance().GetTile(posGrid);
+		Int2 posSpriteSheet = AssetManager.GetInstance().GetAssetForTile(tile);
+		Vector2 posTexture = new Vector2(posSpriteSheet.x * PIXELS_PER_UNIT, posSpriteSheet.y * PIXELS_PER_UNIT);
+		Vector2 spriteSheetTilesSize = AssetManager.GetInstance().GetSpriteSheetTilesSize();
 
-		int vertexIndex = posGrid.y * (size.x * VERTICES_PER_TILE) + posGrid.x;
+		Vector2 assetUVMin = new Vector2();
+ 		assetUVMin.x = posTexture.x / spriteSheetTilesSize.x;
+  		assetUVMin.y = posTexture.y / spriteSheetTilesSize.y;
 
-		// uvs[vertexIndex + VERTEX_INDEX_BOTTOM_LEFT] = tileAssetBlock.
+		Vector2 assetUVCenter = new Vector2();
+		assetUVCenter.x = (posTexture.x + SIZE_TILE * PIXELS_PER_UNIT * 0.5f) / spriteSheetTilesSize.x;
+		assetUVCenter.y = (posTexture.y + SIZE_TILE * PIXELS_PER_UNIT * 0.5f) / spriteSheetTilesSize.y;
+
+		Vector2 assetUVMax = new Vector2();
+		assetUVMax.x = (posTexture.x + SIZE_TILE * PIXELS_PER_UNIT) / spriteSheetTilesSize.x;
+		assetUVMax.y = (posTexture.y + SIZE_TILE * PIXELS_PER_UNIT) / spriteSheetTilesSize.y;
+
+		int vertexIndex = posGrid.y * (size.x * VERTICES_PER_TILE) + posGrid.x * VERTICES_PER_TILE;
+		uvs[vertexIndex + VERTEX_INDEX_BOTTOM_LEFT] = assetUVMin;
+		uvs[vertexIndex + VERTEX_INDEX_TOP_LEFT] = new Vector2(assetUVMin.x, assetUVMax.y);
+		uvs[vertexIndex + VERTEX_INDEX_TOP_RIGHT] = assetUVMax;
+		uvs[vertexIndex + VERTEX_INDEX_BOTTOM_RIGHT] = new Vector2(assetUVMax.x, assetUVMin.y);
+		uvs[vertexIndex + VERTEX_INDEX_CENTER] = assetUVCenter;
+
+		isDirty = true;
 	}
 }

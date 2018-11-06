@@ -1,5 +1,6 @@
 ﻿using UnityEngine;
 using UnityEditor;
+using System;
 
 public static class Extensions {
 	public static float GetAxis(this Vector3 v, int axisIndex){
@@ -22,6 +23,10 @@ public static class Extensions {
 	public Float2(float x, float y) {
 		this.x = x;
 		this.y = y;
+	}
+
+	public override string ToString(){
+		return string.Format("({0}, {1})", x.ToString(), y.ToString());
 	}
 
 	public static Float2 operator +(Float2 value0, Float2 value1){
@@ -69,6 +74,18 @@ public class Float2Drawer : PropertyDrawer {
 		this.y = (int)y;
 	}
 
+	public override string ToString(){
+		return string.Format("({0}, {1})", x.ToString(), y.ToString());
+	}
+
+	public static bool operator ==(Int2 value0, Int2 value1){
+		return value0.x == value1.x && value0.y == value1.y;
+	}
+
+	public static bool operator !=(Int2 value0, Int2 value1){
+		return value0.x != value1.x || value0.y != value1.y;
+	}
+	
 	public static Int2 operator +(Int2 value0, Int2 value1){
 		return new Int2(value0.x + value1.x, value0.y + value1.y);
 	}
@@ -80,6 +97,8 @@ public class Float2Drawer : PropertyDrawer {
 	public static Int2 operator *(Int2 value0, int m) {
 		return new Int2(value0.x * m, value0.y * m);
 	}
+
+	public static Int2 zero { get { return new Int2(0, 0); } }
 }
 
 [CustomPropertyDrawer(typeof(Int2))]

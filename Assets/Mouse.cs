@@ -12,11 +12,11 @@ public class Mouse : Singleton<Mouse> {
 	public StateEnum GetStateRMB() { return StateRMB; }
 
 	private Vector2 pos;
-	private Vector2Int posGrid;
-	public Vector2Int GetPosGrid() { return posGrid; }
+	private Int2 posGrid;
+	public Int2 GetPosGrid() { return posGrid; }
 
 	private float[] timeAtClicks = new float[SUPPORTED_MOUSE_BUTTON_COUNT];
-	private Vector2Int[] posGridAtClicks = new Vector2Int[SUPPORTED_MOUSE_BUTTON_COUNT];
+	private Int2[] posGridAtClicks = new Int2[SUPPORTED_MOUSE_BUTTON_COUNT];
 
 
 	public override bool IsUsingUpdateEarly(){ return true; }

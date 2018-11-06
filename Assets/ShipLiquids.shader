@@ -11,7 +11,10 @@
 		_ScaleTime ("ScaleTime", Float) = 2.0
 	}
 	SubShader{
-		Tags { "RenderType"="Opaque" }
+		Tags { "RenderType"="Transparent" "Queue" = "Transparent"}
+		ZWrite Off
+		Blend SrcAlpha OneMinusSrcAlpha
+		Cull Back
 
 		Pass{
 			CGPROGRAM
@@ -39,6 +42,7 @@
 			sampler2D _ElementsLiquidGasTex_1;
 			sampler2D _ElementsLiquidGasTex_2;
 			sampler2D _ElementsSolidTex;
+			float4 _MainTex_ST;
 			float4 _ElementsLiquidGasTex_0_ST;
 
 			int _ScaleShipX;
@@ -49,7 +53,7 @@
 			v2f vert (appdata v){
 				v2f o;
 				o.vertex = UnityObjectToClipPos(v.vertex);
-				o.uvTexture = TRANSFORM_TEX(v.uvTexture, _ElementsLiquidGasTex_0);
+				o.uvTexture = TRANSFORM_TEX(v.uvTexture, _MainTex);
 				o.uvElements = TRANSFORM_TEX(v.uvElements, _ElementsLiquidGasTex_0);
 				o.color = v.color;
 				return o;
@@ -88,11 +92,12 @@
 				fixed4 pixelElements = fixed4(0.0, 0.0, 0.0, 1.0);
 				pixelElements.xyz = solid * solidColor + liquid * liquidColor + gas * gasColor;
 
-				pixelMainTex.r = lerp(pixelMainTex.r, pixelElements.r, pixelElements.a);
-				pixelMainTex.g = lerp(pixelMainTex.g, pixelElements.g, pixelElements.a);
-				pixelMainTex.b = lerp(pixelMainTex.b, pixelElements.b, pixelElements.a);
-				pixelMainTex.a = pixelElements.a;
+				// pixelMainTex.r = lerp(pixelMainTex.r, pixelElements.r, pixelElements.a);
+				// pixelMainTex.g = lerp(pixelMainTex.g, pixelElements.g, pixelElements.a);
+				// pixelMainTex.b = lerp(pixelMainTex.b, pixelElements.b, pixelElements.a);
+				// pixelMainTex.a = pixelElements.a;
 				return pixelMainTex;
+				return fixed4(i.uvTexture.xy, 0, 1);// pixelMainTex;
 			}
 			ENDCG
 		}
