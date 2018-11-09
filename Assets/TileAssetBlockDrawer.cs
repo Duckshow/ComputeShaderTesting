@@ -23,11 +23,12 @@ public class TileAssetBlockDrawer : PropertyDrawer {
 			EditorGUIUtility.labelWidth = 0.1f;
 
 			SerializedProperty propBlock = property.FindPropertyRelative("Block");
+			SerializedProperty propLine = property.FindPropertyRelative("Line");
+			SerializedProperty propSingle = property.FindPropertyRelative("Single");
+
 			if (propBlock.arraySize != TileAssetBlock.MAX_WIDTH) {
 				propBlock.arraySize = TileAssetBlock.MAX_WIDTH;
 			}
-
-			SerializedProperty propLine = property.FindPropertyRelative("Line");
 			if (propLine.arraySize != TileAssetBlock.MAX_WIDTH){
 				propLine.arraySize = TileAssetBlock.MAX_WIDTH;
 			}
@@ -43,14 +44,16 @@ public class TileAssetBlockDrawer : PropertyDrawer {
 					DrawField(propBlockData.GetArrayElementAtIndex(y), x, y, property, position);
 				}
 
-				DrawField(propLine.GetArrayElementAtIndex(x), x, TileAssetBlock.MAX_HEIGHT + (int)EditorGUIUtility.singleLineHeight, property, position);
+				DrawField(propLine.GetArrayElementAtIndex(x), x, TileAssetBlock.MAX_HEIGHT + 0.5f, property, position);
 			}
+
+			DrawField(propSingle, 0, TileAssetBlock.MAX_HEIGHT + 2.0f, property, position);
 		}
 
 		EditorGUI.EndProperty();
 	}
 
-	void DrawField(SerializedProperty field, int x, int y, SerializedProperty ownerProperty, Rect ownerPosition) {
+	void DrawField(SerializedProperty field, float x, float y, SerializedProperty ownerProperty, Rect ownerPosition) {
 		float width = GetChildPropertyWidth(ownerPosition.width);
 		float height = GetChildPropertyHeight(field);
 
@@ -72,7 +75,7 @@ public class TileAssetBlockDrawer : PropertyDrawer {
 
 	public override float GetPropertyHeight(SerializedProperty property, GUIContent label) {
 		if(property.isExpanded) {
-			return PADDING.y * 3 + (EditorGUI.GetPropertyHeight(property, label, includeChildren: false) + PADDING.y) * TileAssetBlock.MAX_HEIGHT;
+			return PADDING.y * 2 + (EditorGUI.GetPropertyHeight(property, label, includeChildren: false) + PADDING.y) * (TileAssetBlock.MAX_HEIGHT + 3);
 		}
 		else{
 			return EditorGUI.GetPropertyHeight(property, label, includeChildren: false);

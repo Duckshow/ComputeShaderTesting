@@ -3,8 +3,11 @@
 public class ShipGrid : Singleton<ShipGrid> {
 	public class Tile {
 		public enum RoomType { None, Corridor, Greenhouse }
-		private RoomType roomType = RoomType.None;
-		private RoomType roomTypeTemporary = RoomType.None;
+		private RoomType typeRoom = RoomType.None;
+		private RoomType typeRoomTemporary = RoomType.None;
+
+		private TileAssetBlock.BlockType typeBlock = TileAssetBlock.BlockType.None;
+		private TileAssetBlock.BlockType typeBlockTemporary = TileAssetBlock.BlockType.None;
 
 		private Int2 posGrid;
 		private Int2 posTileAssetBlock;
@@ -17,7 +20,7 @@ public class ShipGrid : Singleton<ShipGrid> {
 
 		public void Init() {
 			Int2 zero = Int2.zero;
-			SetRoomType(RoomType.None, zero, zero, shouldSetTemporary: false);
+			SetRoomType(RoomType.None, TileAssetBlock.BlockType.None, zero, zero, shouldSetTemporary: false);
 		}
 
 		public Int2 GetPosTileAssetBlock(bool shouldGetTemporary){
@@ -34,33 +37,64 @@ public class ShipGrid : Singleton<ShipGrid> {
 				}
 			}
 			else{
-				Int2 newPosTileAssetBlock = posGridTile - posGridBlockBottomLeft;
-				Int2 posTileAssetBlockMax = posGridBlockTopRight - posGridBlockBottomLeft;
+				Int2 posBlock = posGridTile - posGridBlockBottomLeft;
+				Int2 posBlockMax = posGridBlockTopRight - posGridBlockBottomLeft;
+				Int2 newPosTileAssetBlock = Int2.zero;
+				TileAssetBlock.BlockType blockType = GetBlockType(shouldSetTemporary);
+				switch (blockType){
+					case TileAssetBlock.BlockType.None:
+						break;
+					case TileAssetBlock.BlockType.Block:
+						// x
+						if (posBlock.x == posBlockMax.x){
+							newPosTileAssetBlock.x = 2;
+						}
+						else if (posBlock.x > 0){
+							newPosTileAssetBlock.x = 1;
+						}
+						else{
+							newPosTileAssetBlock.x = 0;
+						}
 
-				if (newPosTileAssetBlock.x == posTileAssetBlockMax.x) {
-					newPosTileAssetBlock.x = 2;
-				}
-				else if (newPosTileAssetBlock.x > 0){
-					newPosTileAssetBlock.x = 1;
-				}
-				else{
-					newPosTileAssetBlock.x = 0;
-				}
+						// y
+						if (posBlock.y == posBlockMax.y && tileAssetBlock.HasValueInBlock(newPosTileAssetBlock.x, 4)){
+							newPosTileAssetBlock.y = 2;
+						}
+						else if (posBlock.y == posBlockMax.y - 1 && tileAssetBlock.HasValueInBlock(newPosTileAssetBlock.x, 3)){
+							newPosTileAssetBlock.y = 1;
+						}
+						else if(posBlock.y == 0 && tileAssetBlock.HasValueInBlock(newPosTileAssetBlock.x, 0)){
+							newPosTileAssetBlock.y = -2;
+						}
+						else if (posBlock.y == 1 && tileAssetBlock.HasValueInBlock(newPosTileAssetBlock.x, 1)){
+							newPosTileAssetBlock.y = -1; aeahrea // things are upside down! figure it out!
+						}
+						else{
+							newPosTileAssetBlock.y = 0;
+						}
+						break;
+					case TileAssetBlock.BlockType.Line:
+						// x
+						if (posBlock.x == posBlockMax.x){
+							newPosTileAssetBlock.x = 2;
+						}
+						else if (posBlock.x > 0){
+							newPosTileAssetBlock.x = 1;
+						}
+						else{
+							newPosTileAssetBlock.x = 0;
+						}
 
-				if (newPosTileAssetBlock.y == posTileAssetBlockMax.y && tileAssetBlock.HasValueAtPos(newPosTileAssetBlock.x, 4)){
-					newPosTileAssetBlock.y = 4;
-				}
-				else if (newPosTileAssetBlock.y == posTileAssetBlockMax.y - 1 && tileAssetBlock.HasValueAtPos(newPosTileAssetBlock.x, 3)){
-					newPosTileAssetBlock.y = 3;
-				}
-				else if(newPosTileAssetBlock.y == 0 && tileAssetBlock.HasValueAtPos(newPosTileAssetBlock.x, 0)){
-					newPosTileAssetBlock.y = 0;
-				}
-				else if (newPosTileAssetBlock.y == 1 && tileAssetBlock.HasValueAtPos(newPosTileAssetBlock.x, 1)){
-					newPosTileAssetBlock.y = 1;
-				}
-				else{
-					newPosTileAssetBlock.y = 2;
+						// y
+						newPosTileAssetBlock.y = 0;
+						break;
+					case TileAssetBlock.BlockType.Single:
+						newPosTileAssetBlock.x = 0;
+						newPosTileAssetBlock.y = 0;
+						break;
+					default:
+						Debug.LogError(blockType + " hasn't been properly implemented yet!");
+						break;
 				}
 
 				if (shouldSetTemporary){
@@ -73,28 +107,35 @@ public class ShipGrid : Singleton<ShipGrid> {
 		}
 
 		public RoomType GetRoomType(bool shouldGetTemporary) {
-			return shouldGetTemporary ? roomTypeTemporary : roomType;
+			return shouldGetTemporary ? typeRoomTemporary : typeRoom;
+		}
+
+		public TileAssetBlock.BlockType GetBlockType(bool shouldGetTemporary) {
+			return shouldGetTemporary ? typeBlockTemporary : typeBlock;
 		}
 
 		public bool HasTemporarySettings() {
-			return roomTypeTemporary != RoomType.None;
+			return typeRoomTemporary != RoomType.None;
 		}
 
-		public void SetRoomType(RoomType roomType, Int2 posGridRoomStart, Int2 posGridRoomEnd, bool shouldSetTemporary) {
+		public void SetRoomType(RoomType typeRoom, TileAssetBlock.BlockType typeBlock, Int2 posGridBlockBottomLeft, Int2 posGridBlockTopRight, bool shouldSetTemporary) {
 			if (shouldSetTemporary){ 
-				this.roomTypeTemporary = roomType; 
+				this.typeRoomTemporary = typeRoom;
+				this.typeBlockTemporary = typeBlock;
 			}
 			else { 
-				this.roomType = roomType; 
+				this.typeRoom = typeRoom; 
+				this.typeBlock = typeBlock;
 			}
 
-			TileAssetBlock tileAssetBlock = AssetManager.GetInstance().GetTileAssetBlockForRoomType(roomType);
-			SetPosTileAssetBlock(posGridRoomStart, posGridRoomEnd, posGrid, tileAssetBlock, shouldSetTemporary);
+
+			TileAssetBlock tileAssetBlock = AssetManager.GetInstance().GetTileAssetBlockForRoomType(typeRoom);
+			SetPosTileAssetBlock(posGridBlockBottomLeft, posGridBlockTopRight, posGrid, tileAssetBlock, shouldSetTemporary);
 			ShipMesh.GetInstance().UpdateTileAsset(posGrid);
 		}
 
 		public void ClearRoomTypeTemporary(){
-			roomTypeTemporary = RoomType.None;
+			typeRoomTemporary = RoomType.None;
 			posTileAssetBlockTemporary = new Int2(0, 0);
 			ShipMesh.GetInstance().UpdateTileAsset(posGrid);
 		}

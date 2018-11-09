@@ -15,6 +15,8 @@ public class AssetManager : Singleton<AssetManager> {
 				return None;
 			case ShipGrid.Tile.RoomType.Corridor:
 				return Corridor;
+			case ShipGrid.Tile.RoomType.Greenhouse:
+				return Greenhouse;
 			default:
 				Debug.LogError(roomType + " hasn't been properly implemented yet!");
 				return null;
@@ -31,6 +33,6 @@ public class AssetManager : Singleton<AssetManager> {
 		Int2 posTileAssetBlock = tile.GetPosTileAssetBlock(shouldGetTemporary: hasTemporarySettings);
 		TileAssetBlock tileAssetBlock = GetTileAssetBlockForRoomType(roomType);
 
-		return tileAssetBlock.GetPosTexture(posTileAssetBlock);
+		return tileAssetBlock.GetPosTexture(posTileAssetBlock, tile.GetBlockType(shouldGetTemporary: hasTemporarySettings));
 	}
 }

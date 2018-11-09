@@ -7,34 +7,47 @@ using UnityEngine;
 
 	public const int MAX_WIDTH = 3;
 	public const int MAX_HEIGHT = 5;
-	public const int INDEX_CENTER_Y = 2;
+
+	public enum BlockType { None, Single, Line, Block }
 
 	public ColumnDataInt2[] Block = new ColumnDataInt2[MAX_WIDTH];
 	public Int2[] Line = new Int2[MAX_WIDTH];
+	public Int2 Single;
 
 	private bool hasSetHasValueInBlock = false;
 	private bool hasValueInBlock = false;
 
+	private bool hasSetHasValueInLine = false;
+	private bool hasValueInLine = false;
 
-	public Int2 GetPosTexture(Int2 posTileAssetBlock) {
-		if (posTileAssetBlock.y == INDEX_CENTER_Y && HasValueAtPos(posTileAssetBlock.x)) {
-			return Line[posTileAssetBlock.x];
+	private bool hasSetHasValueInSingle = false;
+	private bool hasValueInSingle = false;
+
+
+	public Int2 GetPosTexture(Int2 posTileAssetBlock, BlockType typeBlock) {
+		posTileAssetBlock.y += (MAX_HEIGHT - 1) / 2; // go from 0->4 to -2->2
+
+		switch (typeBlock){
+			case BlockType.None:
+				return Int2.zero;
+			case BlockType.Block:
+				return Block[posTileAssetBlock.x].Data[posTileAssetBlock.y];
+			case BlockType.Line:
+				return Line[posTileAssetBlock.x];
+			case BlockType.Single:
+				return Single;
+			default:
+				Debug.LogError(typeBlock + " hasn't been properly implemented yet!");
+				return Int2.zero;
 		}
-
-		return Block[posTileAssetBlock.x].Data[posTileAssetBlock.y];
 	}
 
-	public bool HasValueAtPos(int x, int y) {
+	public bool HasValueInBlock(int x, int y) {
 		Int2 texPos = Block[x].Data[y];
 		return texPos.x >= 0 && texPos.y >= 0;
 	}
 
-	public bool HasValueAtPos(int x) {
-		Int2 texPos = Line[x];
-		return texPos.x >= 0 && texPos.y >= 0;
-	}
-
-	public bool HasValueInBlock(){
+	public bool HasAnyValueInBlock(){
 		if (hasSetHasValueInBlock) { 
 			return hasValueInBlock;
 		}
@@ -45,7 +58,7 @@ using UnityEngine;
 			ColumnDataInt2 block = Block[x];
 			for (int y = 0; y < block.Data.Length; y++){
 				Int2 data = block.Data[y];
-				if (data.x >= 0 || data.y >= 0) {
+				if (data.x >= 0 && data.y >= 0) {
 					hasValueInBlock = true;
 					return true;
 				}
@@ -54,5 +67,33 @@ using UnityEngine;
 
 		hasValueInBlock = false;
 		return false;
+	}
+
+	public bool HasAnyValueInLine(){
+		if (hasSetHasValueInLine) { 
+			return hasValueInLine;
+		}
+
+		hasSetHasValueInLine = true;
+
+		for (int x = 0; x < Line.Length; x++){
+			Int2 data = Line[x];
+			if (data.x >= 0 && data.y >= 0) {
+				hasValueInLine = true;
+				return true;
+			}
+		}
+
+		hasValueInLine = false;
+		return false;
+	}
+
+	public bool HasAnyValueInSingle(){
+		if (hasSetHasValueInLine) { 
+			return hasValueInLine;
+		}
+
+		hasValueInLine = Single.x >= 0 && Single.y >= 0;
+		return hasValueInLine;
 	}
 }
