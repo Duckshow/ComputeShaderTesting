@@ -10,9 +10,12 @@ using UnityEngine;
 
 	public enum BlockType { None, Single, Line, Block }
 
-	public ColumnDataInt2[] Block = new ColumnDataInt2[MAX_WIDTH];
-	public Int2[] Line = new Int2[MAX_WIDTH];
-	public Int2 Single;
+	[UnityEngine.Serialization.FormerlySerializedAs("Block")] public ColumnDataInt2[] BlockBack = new ColumnDataInt2[MAX_WIDTH];
+	public ColumnDataInt2[] BlockFront = new ColumnDataInt2[MAX_WIDTH];
+	[UnityEngine.Serialization.FormerlySerializedAs("Line")] public Int2[] LineBack = new Int2[MAX_WIDTH];
+	public Int2[] LineFront = new Int2[MAX_WIDTH];
+	[UnityEngine.Serialization.FormerlySerializedAs("Single")] public Int2 SingleBack;
+	public Int2 SingleFront;
 
 	private bool hasSetHasValueInBlock = false;
 	private bool hasValueInBlock = false;
@@ -24,27 +27,26 @@ using UnityEngine;
 	private bool hasValueInSingle = false;
 
 
-	public Int2 GetPosTexture(Int2 posTileAssetBlock, BlockType typeBlock) {
+	public Int2 GetPosTexture(Int2 posTileAssetBlock, BlockType typeBlock, Sorting sorting) {
+		posTileAssetBlock.y *= -1; // because array is "upside-down" to look better in editor
 		posTileAssetBlock.y += (MAX_HEIGHT - 1) / 2; // go from 0->4 to -2->2
 
 		switch (typeBlock){
 			case BlockType.None:
 				return Int2.zero;
 			case BlockType.Block:
-				return Block[posTileAssetBlock.x].Data[posTileAssetBlock.y];
+				ColumnDataInt2[] block = sorting == Sorting.Front ? BlockFront : BlockBack;
+				return block[posTileAssetBlock.x].Data[posTileAssetBlock.y];
 			case BlockType.Line:
-				return Line[posTileAssetBlock.x];
+				Int2[] line = sorting == Sorting.Front ? LineFront : LineBack;
+				return line[posTileAssetBlock.x];
 			case BlockType.Single:
-				return Single;
+				Int2 single = sorting == Sorting.Front ? SingleFront : SingleBack;
+				return single;
 			default:
 				Debug.LogError(typeBlock + " hasn't been properly implemented yet!");
 				return Int2.zero;
 		}
-	}
-
-	public bool HasValueInBlock(int x, int y) {
-		Int2 texPos = Block[x].Data[y];
-		return texPos.x >= 0 && texPos.y >= 0;
 	}
 
 	public bool HasAnyValueInBlock(){
@@ -53,20 +55,10 @@ using UnityEngine;
 		}
 
 		hasSetHasValueInBlock = true;
+		hasValueInBlock = HasAnyValueInBlock(BlockBack);
+		if(!hasValueInBlock) hasValueInBlock = HasAnyValueInBlock(BlockFront);
 
-		for (int x = 0; x < Block.Length; x++){
-			ColumnDataInt2 block = Block[x];
-			for (int y = 0; y < block.Data.Length; y++){
-				Int2 data = block.Data[y];
-				if (data.x >= 0 && data.y >= 0) {
-					hasValueInBlock = true;
-					return true;
-				}
-			}
-		}
-
-		hasValueInBlock = false;
-		return false;
+		return hasValueInBlock;
 	}
 
 	public bool HasAnyValueInLine(){
@@ -75,25 +67,46 @@ using UnityEngine;
 		}
 
 		hasSetHasValueInLine = true;
+		hasValueInLine = HasAnyValueInLine(LineBack);
+		if(!hasValueInLine) hasValueInLine = HasAnyValueInLine(LineFront);
 
-		for (int x = 0; x < Line.Length; x++){
-			Int2 data = Line[x];
-			if (data.x >= 0 && data.y >= 0) {
-				hasValueInLine = true;
-				return true;
-			}
-		}
-
-		hasValueInLine = false;
-		return false;
+		return hasValueInLine;
 	}
 
 	public bool HasAnyValueInSingle(){
-		if (hasSetHasValueInLine) { 
-			return hasValueInLine;
+		if (hasSetHasValueInSingle) { 
+			return hasValueInSingle;
 		}
 
-		hasValueInLine = Single.x >= 0 && Single.y >= 0;
-		return hasValueInLine;
+		hasValueInSingle = HasAnyValueInSingle(SingleBack);
+		if(!hasValueInSingle) hasValueInSingle = HasAnyValueInSingle(SingleFront);
+		return hasValueInSingle;
+	}
+
+	bool HasAnyValueInBlock(ColumnDataInt2[] block) { 
+		for (int x = 0; x < block.Length; x++){
+			ColumnDataInt2 column = block[x];
+			for (int y = 0; y < column.Data.Length; y++){
+				Int2 data = column.Data[y];
+				if (data.x >= 0 && data.y >= 0) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	bool HasAnyValueInLine(Int2[] line) { 
+		for (int x = 0; x < line.Length; x++){
+			Int2 data = line[x];
+			if (data.x >= 0 && data.y >= 0) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool HasAnyValueInSingle(Int2 single) {
+		return single.x >= 0 && single.y >= 0;
 	}
 }

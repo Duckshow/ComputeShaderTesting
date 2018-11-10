@@ -6,7 +6,10 @@ public abstract class EventOwner : MonoBehaviour {
 		EventManager.GetInstance().AddEventOwner(this);
 	}
 	protected virtual void OnDisable(){
-		EventManager.GetInstance().RemoveEventOwner(this);
+		EventManager eventManager = EventManager.GetInstance();
+		if(eventManager == null) return;
+		
+		eventManager.RemoveEventOwner(this);
 	}
 
 	public virtual bool IsUsingAwakeEarly()		{ return false; }

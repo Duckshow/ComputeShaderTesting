@@ -39,6 +39,7 @@ public class ShipGrid : Singleton<ShipGrid> {
 			else{
 				Int2 posBlock = posGridTile - posGridBlockBottomLeft;
 				Int2 posBlockMax = posGridBlockTopRight - posGridBlockBottomLeft;
+				Int2 posBlockCenter = posBlockMax / 2;
 				Int2 newPosTileAssetBlock = Int2.zero;
 				TileAssetBlock.BlockType blockType = GetBlockType(shouldSetTemporary);
 				switch (blockType){
@@ -57,17 +58,21 @@ public class ShipGrid : Singleton<ShipGrid> {
 						}
 
 						// y
-						if (posBlock.y == posBlockMax.y && tileAssetBlock.HasValueInBlock(newPosTileAssetBlock.x, 4)){
-							newPosTileAssetBlock.y = 2;
+						if (posBlock.y > posBlockCenter.y){
+							if (posBlock.y == posBlockMax.y){
+								newPosTileAssetBlock.y = 2;
+							}
+							else{
+								newPosTileAssetBlock.y = 1;
+							}
 						}
-						else if (posBlock.y == posBlockMax.y - 1 && tileAssetBlock.HasValueInBlock(newPosTileAssetBlock.x, 3)){
-							newPosTileAssetBlock.y = 1;
-						}
-						else if(posBlock.y == 0 && tileAssetBlock.HasValueInBlock(newPosTileAssetBlock.x, 0)){
-							newPosTileAssetBlock.y = -2;
-						}
-						else if (posBlock.y == 1 && tileAssetBlock.HasValueInBlock(newPosTileAssetBlock.x, 1)){
-							newPosTileAssetBlock.y = -1; aeahrea // things are upside down! figure it out!
+						else if (posBlock.y < posBlockCenter.y){
+							if (posBlock.y == 0){
+								newPosTileAssetBlock.y = -2;
+							}
+							else{
+								newPosTileAssetBlock.y = -1;
+							}
 						}
 						else{
 							newPosTileAssetBlock.y = 0;
@@ -141,7 +146,6 @@ public class ShipGrid : Singleton<ShipGrid> {
 		}
 	}
 
-	public TileAssetBlock test;
 	private Tile[,] grid;
 
 	private Int2 size;

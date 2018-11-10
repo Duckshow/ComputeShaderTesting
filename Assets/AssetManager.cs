@@ -27,12 +27,12 @@ public class AssetManager : Singleton<AssetManager> {
 		return new Vector2(SpriteSheetTiles.width, SpriteSheetTiles.height);
 	}
 
-	public Int2 GetAssetForTile(ShipGrid.Tile tile) {
+	public Int2 GetAssetForTile(ShipGrid.Tile tile, Sorting sorting) {
 		bool hasTemporarySettings = tile.HasTemporarySettings();
 		ShipGrid.Tile.RoomType roomType = tile.GetRoomType(shouldGetTemporary: hasTemporarySettings);
-		Int2 posTileAssetBlock = tile.GetPosTileAssetBlock(shouldGetTemporary: hasTemporarySettings);
 		TileAssetBlock tileAssetBlock = GetTileAssetBlockForRoomType(roomType);
+		Int2 posTileAssetBlock = tile.GetPosTileAssetBlock(shouldGetTemporary: hasTemporarySettings);
 
-		return tileAssetBlock.GetPosTexture(posTileAssetBlock, tile.GetBlockType(shouldGetTemporary: hasTemporarySettings));
+		return tileAssetBlock.GetPosTexture(posTileAssetBlock, tile.GetBlockType(shouldGetTemporary: hasTemporarySettings), sorting);
 	}
 }

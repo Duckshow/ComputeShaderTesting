@@ -16,6 +16,8 @@ public static class Extensions {
 	}
 }
 
+public enum Sorting { None, Back, Front }
+
 [System.Serializable] public struct Float2 {
 	public float x;
 	public float y;
@@ -78,12 +80,40 @@ public class Float2Drawer : PropertyDrawer {
 		return string.Format("({0}, {1})", x.ToString(), y.ToString());
 	}
 
-	public static bool operator ==(Int2 value0, Int2 value1){
-		return value0.x == value1.x && value0.y == value1.y;
+	public static bool operator ==(Int2 i0, Int2 i1){
+		if (System.Object.ReferenceEquals(i0, i1)){
+			return true;
+		}
+		if (System.Object.ReferenceEquals(null, i0)){
+			return false;
+		}
+
+		return (i0.Equals(i1));
 	}
 
-	public static bool operator !=(Int2 value0, Int2 value1){
-		return value0.x != value1.x || value0.y != value1.y;
+	public static bool operator !=(Int2 i0, Int2 i1){
+		return !(i0 == i1);
+	}
+
+	public override bool Equals(object value){
+		Int2 otherInt2 = (Int2)value;
+
+		return !System.Object.ReferenceEquals(null, otherInt2)
+			&& String.Equals(x, otherInt2.x)
+			&& String.Equals(y, otherInt2.y);
+	}
+
+	public override int GetHashCode(){
+		unchecked{
+			// Choose large primes to avoid hashing collisions
+			const int HashingBase = (int)2166136261;
+			const int HashingMultiplier = 16777619;
+
+			int hash = HashingBase;
+			hash = (hash * HashingMultiplier) ^ (!System.Object.ReferenceEquals(null, x) ? x.GetHashCode() : 0);
+			hash = (hash * HashingMultiplier) ^ (!System.Object.ReferenceEquals(null, y) ? y.GetHashCode() : 0);
+			return hash;
+		}
 	}
 	
 	public static Int2 operator +(Int2 value0, Int2 value1){
@@ -96,6 +126,10 @@ public class Float2Drawer : PropertyDrawer {
 
 	public static Int2 operator *(Int2 value0, int m) {
 		return new Int2(value0.x * m, value0.y * m);
+	}
+
+	public static Int2 operator /(Int2 value0, int d){
+		return new Int2(value0.x / d, value0.y / d);
 	}
 
 	public static Int2 zero { get { return new Int2(0, 0); } }
