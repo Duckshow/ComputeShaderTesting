@@ -10,6 +10,8 @@ using UnityEngine;
 
 	public enum BlockType { None, Single, Line, Block }
 
+	public bool IsRoom = false;
+
 	[UnityEngine.Serialization.FormerlySerializedAs("Block")] public ColumnDataInt2[] BlockBack = new ColumnDataInt2[MAX_WIDTH];
 	public ColumnDataInt2[] BlockFront = new ColumnDataInt2[MAX_WIDTH];
 	[UnityEngine.Serialization.FormerlySerializedAs("Line")] public Int2[] LineBack = new Int2[MAX_WIDTH];

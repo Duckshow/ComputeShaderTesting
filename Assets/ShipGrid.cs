@@ -1,13 +1,22 @@
 ﻿using UnityEngine;
 
 public class ShipGrid : Singleton<ShipGrid> {
-	public class Tile {
+	public class Tile { // TODO: instead of this storing "Temporary"-variables, make a "Temporary"-grid
+		public static int GetUniqueRoomID(Int2 posGridRoomBottomLeft) {
+			return posGridRoomBottomLeft.x << 16 | posGridRoomBottomLeft.y;
+		}
+
+		[System.NonSerialized] public int RoomID = -1;
+		[System.NonSerialized] public int RoomIDTemporary = -1;
+
 		public enum RoomType { None, Corridor, Greenhouse }
 		private RoomType typeRoom = RoomType.None;
 		private RoomType typeRoomTemporary = RoomType.None;
 
 		private TileAssetBlock.BlockType typeBlock = TileAssetBlock.BlockType.None;
 		private TileAssetBlock.BlockType typeBlockTemporary = TileAssetBlock.BlockType.None;
+
+		private bool isRoom = false;
 
 		private Int2 posGrid;
 		private Int2 posTileAssetBlock;
@@ -20,7 +29,7 @@ public class ShipGrid : Singleton<ShipGrid> {
 
 		public void Init() {
 			Int2 zero = Int2.zero;
-			SetRoomType(RoomType.None, TileAssetBlock.BlockType.None, zero, zero, shouldSetTemporary: false);
+			CreateRoom(RoomType.None, -1, TileAssetBlock.BlockType.None, zero, zero, shouldSetTemporary: false);
 		}
 
 		public Int2 GetPosTileAssetBlock(bool shouldGetTemporary){
@@ -119,22 +128,29 @@ public class ShipGrid : Singleton<ShipGrid> {
 			return shouldGetTemporary ? typeBlockTemporary : typeBlock;
 		}
 
+		public bool GetIsRoom() {
+			return isRoom;
+		}
+
 		public bool HasTemporarySettings() {
 			return typeRoomTemporary != RoomType.None;
 		}
 
-		public void SetRoomType(RoomType typeRoom, TileAssetBlock.BlockType typeBlock, Int2 posGridBlockBottomLeft, Int2 posGridBlockTopRight, bool shouldSetTemporary) {
-			if (shouldSetTemporary){ 
+		public void CreateRoom(RoomType typeRoom, int roomID, TileAssetBlock.BlockType typeBlock, Int2 posGridBlockBottomLeft, Int2 posGridBlockTopRight, bool shouldSetTemporary) {
+			if (shouldSetTemporary){
+				RoomIDTemporary = roomID;
 				this.typeRoomTemporary = typeRoom;
 				this.typeBlockTemporary = typeBlock;
 			}
-			else { 
+			else {
+				RoomID = roomID;
 				this.typeRoom = typeRoom; 
 				this.typeBlock = typeBlock;
 			}
 
 
 			TileAssetBlock tileAssetBlock = AssetManager.GetInstance().GetTileAssetBlockForRoomType(typeRoom);
+			if(!shouldSetTemporary) isRoom = tileAssetBlock.IsRoom;
 			SetPosTileAssetBlock(posGridBlockBottomLeft, posGridBlockTopRight, posGrid, tileAssetBlock, shouldSetTemporary);
 			ShipMesh.GetInstance().UpdateTileAsset(posGrid);
 		}

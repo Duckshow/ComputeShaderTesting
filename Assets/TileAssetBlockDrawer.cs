@@ -23,6 +23,12 @@ public class TileAssetBlockDrawer : PropertyDrawer {
 			EditorGUI.indentLevel = 0;
 			EditorGUIUtility.labelWidth = 0.1f;
 
+			SerializedProperty propIsRoom = property.FindPropertyRelative("IsRoom");
+			Rect rectIsRoomLabel = new Rect(position.x, position.y + EditorGUIUtility.singleLineHeight * 1.5f, position.width * 0.33f, EditorGUIUtility.singleLineHeight);
+			Rect rectIsRoom = new Rect(position.x + rectIsRoomLabel.width, position.y + EditorGUIUtility.singleLineHeight * 1.5f, position.width * 0.66f, EditorGUIUtility.singleLineHeight);
+			EditorGUI.LabelField(rectIsRoomLabel, "Is Room?");
+			propIsRoom.boolValue = EditorGUI.Toggle(rectIsRoom, label, propIsRoom.boolValue);
+
 			SerializedProperty propBlock = property.FindPropertyRelative(isShowingBack ? "BlockBack" : "BlockFront");
 			SerializedProperty propLine = property.FindPropertyRelative(isShowingBack ? "LineBack" : "LineFront");
 			SerializedProperty propSingle = property.FindPropertyRelative(isShowingBack ? "SingleBack" : "SingleFront");
@@ -68,7 +74,7 @@ public class TileAssetBlockDrawer : PropertyDrawer {
 
 		Vector2 pos = ownerPosition.position;
 		pos.x += x * width + x * PADDING.x;
-		pos.y += (y + 1) * height + (y + 1) * PADDING.y;
+		pos.y += (y + 1) * height + (y + 2) * PADDING.y;
 
 		Rect rect = new Rect(pos.x, pos.y, width, height);
 		EditorGUI.PropertyField(rect, field);
@@ -84,7 +90,7 @@ public class TileAssetBlockDrawer : PropertyDrawer {
 
 	public override float GetPropertyHeight(SerializedProperty property, GUIContent label) {
 		if(property.isExpanded) {
-			return PADDING.y * 4 + (EditorGUI.GetPropertyHeight(property, label, includeChildren: false) + PADDING.y) * (TileAssetBlock.MAX_HEIGHT + 3);
+			return PADDING.y * 5 + (EditorGUI.GetPropertyHeight(property, label, includeChildren: false) + PADDING.y) * (TileAssetBlock.MAX_HEIGHT + 3);
 		}
 		else{
 			return EditorGUI.GetPropertyHeight(property, label, includeChildren: false);

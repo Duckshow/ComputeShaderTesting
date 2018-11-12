@@ -45,8 +45,8 @@ public class BuildTool : Singleton<BuildTool> {
 	}
 
 	void DrawDraggedOutTiles(bool isTemporary) {
-		Int2 posGridStartCopy = posGridStart;
-		Int2 posGridEndCopy = posGridEnd;
+		Int2 posGridRoomStart = posGridStart;
+		Int2 posGridRoomEnd = posGridEnd;
 
 		TileAssetBlock.BlockType typeBlock = TileAssetBlock.BlockType.None;
 		TileAssetBlock tileAssetBlock = AssetManager.GetInstance().GetTileAssetBlockForRoomType(roomTypeCurrent);
@@ -55,50 +55,91 @@ public class BuildTool : Singleton<BuildTool> {
 		}
 		else if (posGridEnd.x - posGridStart.x != 0 && tileAssetBlock.HasAnyValueInLine()) { 
 			typeBlock = TileAssetBlock.BlockType.Line;
-			posGridEndCopy.y = posGridStartCopy.y;
+			posGridRoomEnd.y = posGridRoomStart.y;
 		}
 		else if(tileAssetBlock.HasAnyValueInSingle()){
 			typeBlock = TileAssetBlock.BlockType.Single;
-			posGridEndCopy = posGridStartCopy;
+			posGridRoomEnd = posGridRoomStart;
 		}
 		else{
 			Debug.LogError(roomTypeCurrent + "'s TileAssetBlock doesn't contain any data!");
 		}
 
-		Int2 posGridRoomBottomLeft = new Int2(Mathf.Min(posGridStartCopy.x, posGridEndCopy.x), Mathf.Min(posGridStartCopy.y, posGridEndCopy.y));
-		Int2 posGridRoomTopRight = new Int2(Mathf.Max(posGridStartCopy.x, posGridEndCopy.x), Mathf.Max(posGridStartCopy.y, posGridEndCopy.y));
-		
-		int coveredTileCountX = (posGridRoomTopRight.x - posGridRoomBottomLeft.x) + 1;
-		int coveredTileCountY = (posGridRoomTopRight.y - posGridRoomBottomLeft.y) + 1;
+		Int2 posGridRoomBottomLeft = new Int2(Mathf.Min(posGridRoomStart.x, posGridRoomEnd.x), Mathf.Min(posGridRoomStart.y, posGridRoomEnd.y));
+		Int2 posGridRoomTopRight = new Int2(Mathf.Max(posGridRoomStart.x, posGridRoomEnd.x), Mathf.Max(posGridRoomStart.y, posGridRoomEnd.y));
 
-		if (coveredTileCountY > 1){
-			if(posGridEnd.y > posGridStart.y) posGridRoomBottomLeft.y -= (coveredTileCountY - 1);
-			else posGridRoomTopRight.y += (coveredTileCountY - 1);
-			coveredTileCountY = coveredTileCountY * 2 - 1;
+		Int2 coveredTileCount = new Int2();
+		coveredTileCount.x = (posGridRoomTopRight.x - posGridRoomBottomLeft.x) + 1;
+		coveredTileCount.y = (posGridRoomTopRight.y - posGridRoomBottomLeft.y) + 1;
+
+		if (coveredTileCount.y > 1){
+			if(posGridEnd.y > posGridStart.y) posGridRoomBottomLeft.y -= (coveredTileCount.y - 1);
+			else posGridRoomTopRight.y += (coveredTileCount.y - 1);
+			coveredTileCount.y = coveredTileCount.y * 2 - 1;
 		}
 
 		int posGridRoomBottomClamping = Mathf.Max(0, posGridRoomBottomLeft.y) - posGridRoomBottomLeft.y;
 		posGridRoomBottomLeft.y += posGridRoomBottomClamping;
 		posGridRoomTopRight.y -= posGridRoomBottomClamping;
-		coveredTileCountY -= posGridRoomBottomClamping * 2;
+		coveredTileCount.y -= posGridRoomBottomClamping * 2;
 
 		int posGridRoomTopClamping = posGridRoomTopRight.y - Mathf.Min(posGridRoomTopRight.y, ShipGrid.GetInstance().GetSize().y - 1);
 		posGridRoomBottomLeft.y += posGridRoomTopClamping;
 		posGridRoomTopRight.y -= posGridRoomTopClamping;
-		coveredTileCountY -= posGridRoomTopClamping * 2;
+		coveredTileCount.y -= posGridRoomTopClamping * 2;
 
-		affectedTileCount = coveredTileCountX * coveredTileCountY;
+		affectedTileCount = coveredTileCount.x * coveredTileCount.y;
 		if (affectedTiles == null || affectedTiles.Length < affectedTileCount){
 			affectedTiles = new Int2[affectedTileCount];
 		}
 
-		for (int x = 0; x < coveredTileCountX; x++){
-			for (int y = 0; y < coveredTileCountY; y++){
+		int roomID = ShipGrid.Tile.GetUniqueRoomID(posGridRoomBottomLeft);
+		Int2 maxViableSize = coveredTileCount;
+
+		bool isDone = false;
+		for (int x = 0; x < coveredTileCount.x; x++){
+			if(isDone) break;
+
+			for (int y = 0; y < coveredTileCount.y; y++){
+				Int2 tilePosGrid = posGridRoomBottomLeft + new Int2(x, y);
+				ShipGrid.Tile tile = ShipGrid.GetInstance().GetTile(tilePosGrid);
+
+				bool isRoom = tile.GetIsRoom();
+				if (posGridRoomBottomLeft.y + y == posGridRoomStart.y){
+					if (isRoom){
+						int distanceToRoomCenterX = Mathf.Abs((posGridRoomBottomLeft.x + x) - posGridRoomStart.x);
+						maxViableSize.x = Mathf.Min(maxViableSize.x, distanceToRoomCenterX);
+						isDone = true;
+						break;
+					}
+				}
+				else{
+					if (isRoom){
+						int distanceToRoomCenterY = Mathf.Abs((posGridRoomBottomLeft.y + y) - posGridRoomStart.y) - 1;
+						maxViableSize.y = Mathf.Min(maxViableSize.y, distanceToRoomCenterY * 2 + 1);
+					}
+				}
+
+			}
+		}
+		Debug.Log(maxViableSize);
+		coveredTileCount = maxViableSize;
+
+		for (int x = 0; x < coveredTileCount.x; x++){
+			// if(isDone) break;
+
+			for (int y = 0; y < coveredTileCount.y; y++){
 				// Debug.Log(x + ", " + y + " - " + coveredTileCountX + "/" + coveredTileCountY);
 				Int2 tilePosGrid = posGridRoomBottomLeft + new Int2(x, y);
 				ShipGrid.Tile tile = ShipGrid.GetInstance().GetTile(tilePosGrid);
-				tile.SetRoomType(roomTypeCurrent, typeBlock, posGridRoomBottomLeft, posGridRoomTopRight, isTemporary);
-				affectedTiles[y * coveredTileCountX + x] = tilePosGrid;
+				// if (x == 0 && y == 0 && tile.RoomID >= 0){
+				// 	isDone = true;
+				// 	break;
+				// 	// roomID = tile.RoomID;
+				// }
+
+				tile.CreateRoom(roomTypeCurrent, roomID, typeBlock, posGridRoomBottomLeft, posGridRoomTopRight, isTemporary);
+				affectedTiles[y * coveredTileCount.x + x] = tilePosGrid;
 			}
 		}
 	}
