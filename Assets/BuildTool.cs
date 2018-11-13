@@ -10,6 +10,10 @@ public class BuildTool : Singleton<BuildTool> {
 	private int affectedTileCount = 0;
 	private Int2[] affectedTiles;
 
+	private Int2 lastPosGridRoomBottomLeft = Int2.zero;
+	private Int2 lastPosGridRoomTopRight = Int2.zero;
+	private Int2 lastCoveredTileCount = Int2.zero;
+
 	private ShipGrid.Tile.RoomType roomTypeCurrent = ShipGrid.Tile.RoomType.Corridor;
 
 
@@ -45,6 +49,10 @@ public class BuildTool : Singleton<BuildTool> {
 	}
 
 	void DrawDraggedOutTiles(bool isTemporary) {
+		if (ShipGrid.GetInstance().GetTile(posGridStart).GetIsRoom()){
+			return;
+		}
+
 		Int2 posGridRoomStart = posGridStart;
 		Int2 posGridRoomEnd = posGridEnd;
 
@@ -65,81 +73,68 @@ public class BuildTool : Singleton<BuildTool> {
 			Debug.LogError(roomTypeCurrent + "'s TileAssetBlock doesn't contain any data!");
 		}
 
-		Int2 posGridRoomBottomLeft = new Int2(Mathf.Min(posGridRoomStart.x, posGridRoomEnd.x), Mathf.Min(posGridRoomStart.y, posGridRoomEnd.y));
-		Int2 posGridRoomTopRight = new Int2(Mathf.Max(posGridRoomStart.x, posGridRoomEnd.x), Mathf.Max(posGridRoomStart.y, posGridRoomEnd.y));
+		Int2 newPosGridRoomBottomLeft = new Int2(Mathf.Min(posGridRoomStart.x, posGridRoomEnd.x), Mathf.Min(posGridRoomStart.y, posGridRoomEnd.y));
+		Int2 newPosGridRoomTopRight = new Int2(Mathf.Max(posGridRoomStart.x, posGridRoomEnd.x), Mathf.Max(posGridRoomStart.y, posGridRoomEnd.y));
 
-		Int2 coveredTileCount = new Int2();
-		coveredTileCount.x = (posGridRoomTopRight.x - posGridRoomBottomLeft.x) + 1;
-		coveredTileCount.y = (posGridRoomTopRight.y - posGridRoomBottomLeft.y) + 1;
+		Int2 newCoveredTileCount = new Int2();
+		newCoveredTileCount.x = (newPosGridRoomTopRight.x - newPosGridRoomBottomLeft.x) + 1;
+		newCoveredTileCount.y = (newPosGridRoomTopRight.y - newPosGridRoomBottomLeft.y) + 1;
 
-		if (coveredTileCount.y > 1){
-			if(posGridEnd.y > posGridStart.y) posGridRoomBottomLeft.y -= (coveredTileCount.y - 1);
-			else posGridRoomTopRight.y += (coveredTileCount.y - 1);
-			coveredTileCount.y = coveredTileCount.y * 2 - 1;
+		if (newCoveredTileCount.y > 1){
+			if(posGridEnd.y > posGridStart.y) newPosGridRoomBottomLeft.y -= (newCoveredTileCount.y - 1);
+			else newPosGridRoomTopRight.y += (newCoveredTileCount.y - 1);
+			newCoveredTileCount.y = newCoveredTileCount.y * 2 - 1;
 		}
 
-		int posGridRoomBottomClamping = Mathf.Max(0, posGridRoomBottomLeft.y) - posGridRoomBottomLeft.y;
-		posGridRoomBottomLeft.y += posGridRoomBottomClamping;
-		posGridRoomTopRight.y -= posGridRoomBottomClamping;
-		coveredTileCount.y -= posGridRoomBottomClamping * 2;
+		Int2 gridSize = ShipGrid.GetInstance().GetSize();
 
-		int posGridRoomTopClamping = posGridRoomTopRight.y - Mathf.Min(posGridRoomTopRight.y, ShipGrid.GetInstance().GetSize().y - 1);
-		posGridRoomBottomLeft.y += posGridRoomTopClamping;
-		posGridRoomTopRight.y -= posGridRoomTopClamping;
-		coveredTileCount.y -= posGridRoomTopClamping * 2;
+		bool isColliding = false;
+		for (int x = 0; x < newCoveredTileCount.x; x++){
+			if(isColliding) break;
 
-		affectedTileCount = coveredTileCount.x * coveredTileCount.y;
+			for (int y = 0; y < newCoveredTileCount.y; y++){
+				Int2 tilePosGrid = newPosGridRoomBottomLeft + new Int2(x, y);
+				tilePosGrid.x = Mathf.Clamp(tilePosGrid.x, 0, gridSize.x);
+				tilePosGrid.y = Mathf.Clamp(tilePosGrid.y, 0, gridSize.y);
+
+				ShipGrid.Tile tile = ShipGrid.GetInstance().GetTile(tilePosGrid);
+				isColliding = tile.GetIsRoom();
+
+				Vector2 size = new Vector2(gridSize.x, gridSize.y);
+				Vector2 worldPos = (Vector2)ShipGrid.GetInstance().transform.position - (size / 2) + new Vector2(tilePosGrid.x, tilePosGrid.y) + new Vector2(0.5f, 0.5f);
+				float duration = 100.0f;
+				float length = 0.25f;
+				Debug.DrawLine(worldPos + length * Vector2.up, worldPos + length * Vector2.right, Color.magenta, duration);
+				Debug.DrawLine(worldPos + length * Vector2.right, worldPos + length * Vector2.down, Color.magenta, duration);
+				Debug.DrawLine(worldPos + length * Vector2.down, worldPos + length * Vector2.left, Color.magenta, duration);
+				Debug.DrawLine(worldPos + length * Vector2.left, worldPos + length * Vector2.up, Color.magenta, duration);
+			}
+		}
+
+		if (isColliding){
+			newCoveredTileCount = lastCoveredTileCount;
+			newPosGridRoomBottomLeft = lastPosGridRoomBottomLeft;
+			newPosGridRoomTopRight = lastPosGridRoomTopRight;
+		}
+		lastPosGridRoomBottomLeft = newPosGridRoomBottomLeft;
+		lastPosGridRoomTopRight = newPosGridRoomTopRight;
+		lastCoveredTileCount = newCoveredTileCount;
+
+		affectedTileCount = newCoveredTileCount.x * newCoveredTileCount.y;
 		if (affectedTiles == null || affectedTiles.Length < affectedTileCount){
 			affectedTiles = new Int2[affectedTileCount];
 		}
 
-		int roomID = ShipGrid.Tile.GetUniqueRoomID(posGridRoomBottomLeft);
-		Int2 maxViableSize = coveredTileCount;
+		int roomID = ShipGrid.Tile.GetUniqueRoomID(newPosGridRoomBottomLeft);
+		for (int x = 0; x < newCoveredTileCount.x; x++){
+			for (int y = 0; y < newCoveredTileCount.y; y++){
+				Int2 tilePosGrid = newPosGridRoomBottomLeft + new Int2(x, y);
+				tilePosGrid.x = Mathf.Clamp(tilePosGrid.x, 0, gridSize.x);
+				tilePosGrid.y = Mathf.Clamp(tilePosGrid.y, 0, gridSize.y);
 
-		bool isDone = false;
-		for (int x = 0; x < coveredTileCount.x; x++){
-			if(isDone) break;
-
-			for (int y = 0; y < coveredTileCount.y; y++){
-				Int2 tilePosGrid = posGridRoomBottomLeft + new Int2(x, y);
 				ShipGrid.Tile tile = ShipGrid.GetInstance().GetTile(tilePosGrid);
-
-				bool isRoom = tile.GetIsRoom();
-				if (posGridRoomBottomLeft.y + y == posGridRoomStart.y){
-					if (isRoom){
-						int distanceToRoomCenterX = Mathf.Abs((posGridRoomBottomLeft.x + x) - posGridRoomStart.x);
-						maxViableSize.x = Mathf.Min(maxViableSize.x, distanceToRoomCenterX);
-						isDone = true;
-						break;
-					}
-				}
-				else{
-					if (isRoom){
-						int distanceToRoomCenterY = Mathf.Abs((posGridRoomBottomLeft.y + y) - posGridRoomStart.y) - 1;
-						maxViableSize.y = Mathf.Min(maxViableSize.y, distanceToRoomCenterY * 2 + 1);
-					}
-				}
-
-			}
-		}
-		Debug.Log(maxViableSize);
-		coveredTileCount = maxViableSize;
-
-		for (int x = 0; x < coveredTileCount.x; x++){
-			// if(isDone) break;
-
-			for (int y = 0; y < coveredTileCount.y; y++){
-				// Debug.Log(x + ", " + y + " - " + coveredTileCountX + "/" + coveredTileCountY);
-				Int2 tilePosGrid = posGridRoomBottomLeft + new Int2(x, y);
-				ShipGrid.Tile tile = ShipGrid.GetInstance().GetTile(tilePosGrid);
-				// if (x == 0 && y == 0 && tile.RoomID >= 0){
-				// 	isDone = true;
-				// 	break;
-				// 	// roomID = tile.RoomID;
-				// }
-
-				tile.CreateRoom(roomTypeCurrent, roomID, typeBlock, posGridRoomBottomLeft, posGridRoomTopRight, isTemporary);
-				affectedTiles[y * coveredTileCount.x + x] = tilePosGrid;
+				tile.CreateRoom(roomTypeCurrent, roomID, typeBlock, newPosGridRoomBottomLeft, newPosGridRoomTopRight, isTemporary);
+				affectedTiles[y * newCoveredTileCount.x + x] = tilePosGrid;
 			}
 		}
 	}
