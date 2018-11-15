@@ -16,6 +16,7 @@ public static class Extensions {
 	}
 }
 
+public enum Direction { None, Up, Down, Left, Right }
 public enum Sorting { None, Back, Front }
 
 [System.Serializable] public struct Float2 {

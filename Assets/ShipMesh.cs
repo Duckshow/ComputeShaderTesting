@@ -178,6 +178,23 @@ public class ShipMesh : Singleton<ShipMesh> {
 			assetUVMax.x = (posTexture.x + SIZE_TILE * PIXELS_PER_UNIT) / spriteSheetTilesSize.x;
 			assetUVMax.y = (posTexture.y + SIZE_TILE * PIXELS_PER_UNIT) / spriteSheetTilesSize.y;
 
+			switch (tile.GetRotation()){
+				case Direction.None:
+					break;
+				case Direction.Up:
+					break;
+				case Direction.Down:
+					break;
+				case Direction.Left:
+					break;
+				case Direction.Right:
+					åarcdeardäe race  // do shit here!
+					break;
+				default:
+					Debug.LogError(tile.GetRotation() + " hasn't been properly implemented yet!");
+					break;
+			}
+
 			int vertexIndex = posGrid.y * (ShipMesh.GetInstance().GetSizeGrid().x * VERTICES_PER_TILE) + posGrid.x * VERTICES_PER_TILE;
 			uvs[vertexIndex + VERTEX_INDEX_BOTTOM_LEFT] = assetUVMin;
 			uvs[vertexIndex + VERTEX_INDEX_TOP_LEFT] = new Vector2(assetUVMin.x, assetUVMax.y);

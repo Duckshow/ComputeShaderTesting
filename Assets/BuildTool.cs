@@ -16,6 +16,8 @@ public class BuildTool : Singleton<BuildTool> {
 
 	private ShipGrid.Tile.RoomType roomTypeCurrent = ShipGrid.Tile.RoomType.Corridor;
 
+	private Direction rotation = Direction.None;
+
 
 	public override bool IsUsingAwakeDefault() { return true; }
 	public override void AwakeDefault() {
@@ -23,7 +25,9 @@ public class BuildTool : Singleton<BuildTool> {
 	}
 
 	public override bool IsUsingUpdateDefault() { return true; }
-	public override void UpdateDefault() { 
+	public override void UpdateDefault() {
+		rotation = GetCurrentRotation();
+
 		if (Mouse.GetInstance().GetStateLMB() == Mouse.StateEnum.Click){
 			posGridStart = instanceMouse.GetPosGrid();
 		}
@@ -38,6 +42,24 @@ public class BuildTool : Singleton<BuildTool> {
 			ClearDraggedOutTiles();
 			DrawDraggedOutTiles(isTemporary: false);
 		}
+	}
+
+	Direction GetCurrentRotation() { 
+		int rotationIndex = (int)rotation;
+		int directionLength = System.Enum.GetValues(typeof(Direction)).Length;
+		if (Input.GetKeyDown(KeyCode.E)){ // TODO: key-input should be handled by its own class
+			rotationIndex++;
+			if (rotationIndex >= directionLength) {
+				rotationIndex = 1;
+			}
+		}
+		if (Input.GetKeyDown(KeyCode.Q)){ // TODO: key-input should be handled by its own class
+			rotationIndex--;
+			if (rotationIndex == 0){
+				rotationIndex = directionLength - 1;
+			}
+		}
+		return (Direction)rotationIndex;
 	}
 
 	void ClearDraggedOutTiles() {
@@ -58,17 +80,27 @@ public class BuildTool : Singleton<BuildTool> {
 
 		TileAssetBlock.BlockType typeBlock = TileAssetBlock.BlockType.None;
 		TileAssetBlock tileAssetBlock = AssetManager.GetInstance().GetTileAssetBlockForRoomType(roomTypeCurrent);
+
+		// Block
 		if (posGridEnd.y - posGridStart.y != 0 && tileAssetBlock.HasAnyValueInBlock()) {
+			rotation = Direction.None;
 			typeBlock = TileAssetBlock.BlockType.Block;
 		}
-		else if (posGridEnd.x - posGridStart.x != 0 && tileAssetBlock.HasAnyValueInLine()) { 
+
+		// Line
+		else if (posGridEnd.x - posGridStart.x != 0 && tileAssetBlock.HasAnyValueInLine()) {
+			rotation = Direction.None;
 			typeBlock = TileAssetBlock.BlockType.Line;
 			posGridRoomEnd.y = posGridRoomStart.y;
 		}
+
+		// Single
 		else if(tileAssetBlock.HasAnyValueInSingle()){
 			typeBlock = TileAssetBlock.BlockType.Single;
 			posGridRoomEnd = posGridRoomStart;
 		}
+
+		// Fail
 		else{
 			Debug.LogError(roomTypeCurrent + "'s TileAssetBlock doesn't contain any data!");
 		}
@@ -133,6 +165,7 @@ public class BuildTool : Singleton<BuildTool> {
 				tilePosGrid.y = Mathf.Clamp(tilePosGrid.y, 0, gridSize.y);
 
 				ShipGrid.Tile tile = ShipGrid.GetInstance().GetTile(tilePosGrid);
+				tile.SetRotation(rotation);
 				tile.CreateRoom(roomTypeCurrent, roomID, typeBlock, newPosGridRoomBottomLeft, newPosGridRoomTopRight, isTemporary);
 				affectedTiles[y * newCoveredTileCount.x + x] = tilePosGrid;
 			}
