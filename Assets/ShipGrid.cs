@@ -23,7 +23,7 @@ public class ShipGrid : Singleton<ShipGrid> {
 		private Int2 posTileAssetBlockTemporary;
 
 		private Direction rotation = Direction.None;
-
+		private Direction rotationTemporary = Direction.None;
 
 		public Tile(Int2 posGrid) {
 			this.posGrid = posGrid;
@@ -122,12 +122,14 @@ public class ShipGrid : Singleton<ShipGrid> {
 			}
 		}
 
-		public void SetRotation(Direction rotation) {
-			this.rotation = rotation;
+		public void SetRotation(Direction rotation, bool shouldSetTemporary) {
+			Debug.Log(shouldSetTemporary + ": " + rotation + ", " + posGrid);
+			if(shouldSetTemporary) this.rotationTemporary = rotation;
+			else this.rotation = rotation;
 		}
 
-		public Direction GetRotation() {
-			return rotation;
+		public Direction GetRotation(bool shouldGetTemporary) {
+			return shouldGetTemporary ? rotationTemporary : rotation;
 		}
 
 		public RoomType GetRoomType(bool shouldGetTemporary) {
@@ -179,7 +181,6 @@ public class ShipGrid : Singleton<ShipGrid> {
 	public Int2 GetSize() {
 		return size;
 	}
-
 
 	public static Int2 ConvertWorldToGrid(Vector2 posWorld) {
 		Int2 size = GetInstance().size;

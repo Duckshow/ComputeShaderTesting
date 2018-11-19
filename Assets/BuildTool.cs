@@ -6,6 +6,7 @@ public class BuildTool : Singleton<BuildTool> {
 
 	private Int2 posGridStart;
 	private Int2 posGridEnd;
+	private Int2 posGridEndOld;
 
 	private int affectedTileCount = 0;
 	private Int2[] affectedTiles;
@@ -34,9 +35,12 @@ public class BuildTool : Singleton<BuildTool> {
 		else if (Mouse.GetInstance().GetStateLMB() == Mouse.StateEnum.Hold){
 			roomTypeCurrent = Input.GetKey(KeyCode.Space) ? ShipGrid.Tile.RoomType.Greenhouse : ShipGrid.Tile.RoomType.Corridor;
 
+			posGridEndOld = posGridEnd;
 			posGridEnd = instanceMouse.GetPosGrid();
-			ClearDraggedOutTiles();
-			DrawDraggedOutTiles(isTemporary: true);
+			if (posGridEnd != posGridEndOld){
+				ClearDraggedOutTiles();
+				DrawDraggedOutTiles(isTemporary: true);
+			}
 		}
 		else if (Mouse.GetInstance().GetStateLMB() == Mouse.StateEnum.Release){
 			ClearDraggedOutTiles();
@@ -165,7 +169,7 @@ public class BuildTool : Singleton<BuildTool> {
 				tilePosGrid.y = Mathf.Clamp(tilePosGrid.y, 0, gridSize.y);
 
 				ShipGrid.Tile tile = ShipGrid.GetInstance().GetTile(tilePosGrid);
-				tile.SetRotation(rotation);
+				tile.SetRotation(rotation, isTemporary);
 				tile.CreateRoom(roomTypeCurrent, roomID, typeBlock, newPosGridRoomBottomLeft, newPosGridRoomTopRight, isTemporary);
 				affectedTiles[y * newCoveredTileCount.x + x] = tilePosGrid;
 			}

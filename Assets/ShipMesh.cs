@@ -35,14 +35,23 @@ public class ShipMesh : Singleton<ShipMesh> {
 		[SerializeField] private MeshFilter meshFilter;
 		private Mesh mesh;
 		private Vector2[] uvs;
+		private Vector3[] vertices;
+		private Vector3[] verticesOriginal;
+
+		static int GetVertexIndex(Int2 posGrid) {
+			return posGrid.y * (ShipMesh.GetInstance().GetSizeGrid().x * VERTICES_PER_TILE) + posGrid.x * VERTICES_PER_TILE;
+		}
 
 		public void Init(Sorting sorting) {
 			this.sorting = sorting;
 			mesh = meshFilter.mesh;
 			uvs = mesh.uv;
+			vertices = mesh.vertices;
+			verticesOriginal = vertices;
 		}
 
 		public void Update() {
+			mesh.vertices = vertices;
 			mesh.uv = uvs;
 			meshFilter.mesh = mesh;
 		}
@@ -52,7 +61,7 @@ public class ShipMesh : Singleton<ShipMesh> {
 
 			int vertexCount = size.x * size.y * VERTICES_PER_TILE;
 
-			Vector3[] vertices = new Vector3[vertexCount];
+			vertices = new Vector3[vertexCount];
 			uvs = new Vector2[vertexCount];
 			Vector2[] uvPerlin = new Vector2[vertexCount];
 			int[] tris = new int[size.x * size.y * TRIS_PER_TILE * 3];
@@ -149,6 +158,7 @@ public class ShipMesh : Singleton<ShipMesh> {
 				}
 			}
 
+			verticesOriginal = vertices;
 			mesh.vertices = vertices;
 			mesh.uv = uvs;
 			mesh.uv2 = uvPerlin;
@@ -156,7 +166,6 @@ public class ShipMesh : Singleton<ShipMesh> {
 			mesh.colors32 = vertexColors;
 			mesh.RecalculateBounds();
 			meshFilter.mesh = mesh;
-
 		}
 
 		public void UpdateTileAsset(Int2 posGrid) {
@@ -165,42 +174,63 @@ public class ShipMesh : Singleton<ShipMesh> {
 			Vector2 posTexture = new Vector2(posSpriteSheet.x * PIXELS_PER_UNIT, posSpriteSheet.y * PIXELS_PER_UNIT);
 			Vector2 spriteSheetTilesSize = AssetManager.GetInstance().GetSpriteSheetTilesSize();
 
-
 			Vector2 assetUVMin = new Vector2();
 			assetUVMin.x = posTexture.x / spriteSheetTilesSize.x;
 			assetUVMin.y = posTexture.y / spriteSheetTilesSize.y;
-
-			Vector2 assetUVCenter = new Vector2();
-			assetUVCenter.x = (posTexture.x + SIZE_TILE * PIXELS_PER_UNIT * 0.5f) / spriteSheetTilesSize.x;
-			assetUVCenter.y = (posTexture.y + SIZE_TILE * PIXELS_PER_UNIT * 0.5f) / spriteSheetTilesSize.y;
 
 			Vector2 assetUVMax = new Vector2();
 			assetUVMax.x = (posTexture.x + SIZE_TILE * PIXELS_PER_UNIT) / spriteSheetTilesSize.x;
 			assetUVMax.y = (posTexture.y + SIZE_TILE * PIXELS_PER_UNIT) / spriteSheetTilesSize.y;
 
-			switch (tile.GetRotation()){
-				case Direction.None:
-					break;
-				case Direction.Up:
-					break;
-				case Direction.Down:
-					break;
-				case Direction.Left:
-					break;
-				case Direction.Right:
-					åarcdeardäe race  // do shit here!
-					break;
-				default:
-					Debug.LogError(tile.GetRotation() + " hasn't been properly implemented yet!");
-					break;
-			}
+			Vector2 assetUVCenter = new Vector2();
+			assetUVCenter.x = Mathf.Lerp(assetUVMin.x, assetUVMax.x, 0.5f);
+			assetUVCenter.y = Mathf.Lerp(assetUVMin.y, assetUVMax.y, 0.5f);
 
-			int vertexIndex = posGrid.y * (ShipMesh.GetInstance().GetSizeGrid().x * VERTICES_PER_TILE) + posGrid.x * VERTICES_PER_TILE;
+			int vertexIndex = GetVertexIndex(posGrid);
 			uvs[vertexIndex + VERTEX_INDEX_BOTTOM_LEFT] = assetUVMin;
 			uvs[vertexIndex + VERTEX_INDEX_TOP_LEFT] = new Vector2(assetUVMin.x, assetUVMax.y);
 			uvs[vertexIndex + VERTEX_INDEX_TOP_RIGHT] = assetUVMax;
 			uvs[vertexIndex + VERTEX_INDEX_BOTTOM_RIGHT] = new Vector2(assetUVMax.x, assetUVMin.y);
 			uvs[vertexIndex + VERTEX_INDEX_CENTER] = assetUVCenter;
+
+			RotateTile(posGrid, tile.GetRotation(shouldGetTemporary: tile.HasTemporarySettings()));
+		}
+
+		public void RotateTile(Int2 posGrid, Direction rotation) {
+			// if (rotation == Direction.None || rotation == Direction.Up) {
+			// 	return;
+			// }
+			Debug.Log(rotation);
+
+			int vIndex = GetVertexIndex(posGrid);
+
+			Vector3 vertexBottomLeftCached = 	verticesOriginal[vIndex + VERTEX_INDEX_BOTTOM_LEFT];
+			Vector3 vertexBottomRightCached = 	verticesOriginal[vIndex + VERTEX_INDEX_BOTTOM_RIGHT];
+			Vector3 vertexTopLeftCached = 		verticesOriginal[vIndex + VERTEX_INDEX_TOP_LEFT];
+			Vector3 vertexTopRightCached = 		verticesOriginal[vIndex + VERTEX_INDEX_TOP_RIGHT];
+
+			// switch (rotation){
+			// 	case Direction.Down:
+			// 		vertices[vIndex + VERTEX_INDEX_BOTTOM_LEFT] = vertexTopRightCached;
+			// 		vertices[vIndex + VERTEX_INDEX_BOTTOM_RIGHT] = vertexTopLeftCached;
+			// 		vertices[vIndex + VERTEX_INDEX_TOP_LEFT] = vertexBottomRightCached;
+			// 		vertices[vIndex + VERTEX_INDEX_TOP_RIGHT] = vertexBottomLeftCached;
+			// 		break;
+			// 	case Direction.Left:
+			// 		vertices[vIndex + VERTEX_INDEX_BOTTOM_LEFT] = vertexTopLeftCached;
+			// 		vertices[vIndex + VERTEX_INDEX_BOTTOM_RIGHT] = vertexBottomLeftCached;
+			// 		vertices[vIndex + VERTEX_INDEX_TOP_LEFT] = vertexTopRightCached;
+			// 		vertices[vIndex + VERTEX_INDEX_TOP_RIGHT] = vertexBottomRightCached;
+			// 		break;
+			// 	case Direction.Right:
+					vertices[vIndex + VERTEX_INDEX_BOTTOM_LEFT] = vertexBottomRightCached;
+					vertices[vIndex + VERTEX_INDEX_BOTTOM_RIGHT] = vertexTopRightCached;
+					vertices[vIndex + VERTEX_INDEX_TOP_LEFT] = vertexBottomLeftCached;
+					vertices[vIndex + VERTEX_INDEX_TOP_RIGHT] = vertexTopLeftCached;
+			// 		break;
+			// 	default:
+			// 		throw new System.NotImplementedException(rotation.ToString());
+			// }
 		}
 	}
 

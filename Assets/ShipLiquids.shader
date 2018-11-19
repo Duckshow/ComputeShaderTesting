@@ -27,6 +27,7 @@
 				float4 vertex : POSITION;
 				fixed2 uvTexture : TEXCOORD0;
 				fixed2 uvElements : TEXCOORD1;
+				fixed euler : TEXCOORD2;
 				fixed4 color : COLOR0;
 			};
 
